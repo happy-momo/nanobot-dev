@@ -1,0 +1,68 @@
+{
+  "workspace": "e:/prj/nanobot-dev/edge_adviser/workspace",
+  "monitor_interval_s": 30,
+  "deep_report_cron": "0 6 * * *",
+  "learn_cron": "0 3 * * *",
+  "defaults": {
+    "config_path": "nanobot.runtime.json"
+  },
+  "providers": {
+    "online": {
+      "model_preset": "primary",
+      "timeout_s": 120,
+      "max_tokens": 4096
+    },
+    "offline": {
+      "model_preset": "ollama-qwen",
+      "api_base": "http://127.0.0.1:11434",
+      "timeout_s": 180,
+      "max_tokens": 2048
+    },
+    "routine": {
+      "model_preset": "ollama-qwen",
+      "timeout_s": 90,
+      "max_tokens": 1024
+    }
+  },
+  "assets": [
+    {
+      "asset_id": "pump1",
+      "name": "AB Cement Feed Pump",
+      "kind": "pump",
+      "description": "High-pressure feed pump for the cement raw-mill slurry line.",
+      "sample_freq_s": 1.0,
+      "window_s": 60,
+      "scenario_notes": [
+        "Pump P-201 feeds raw slurry to the cement mill at 30 m3/h nominal.",
+        "Vibration above 4.5 mm/s historically preceded bearing replacement.",
+        "RPM below 1200 suggests upstream flow starvation or cavitation.",
+        "Ambient temperature around the pump house rises in summer afternoons."
+      ],
+      "metrics": [
+        { "key": "temp", "unit": "degC", "norm_max": 68,
+          "warn_max": 68, "warn_min": null,
+          "crit_max": 73, "persist": 5,
+          "description": "Bearing housing temperature" },
+        { "key": "vibration", "unit": "mm/s", "norm_max": 3.0,
+          "warn_max": 3.0, "crit_max": 4.5, "persist": 5,
+          "description": "Overall bearing velocity (ISO 10816-3)" },
+        { "key": "rpm", "unit": "rpm", "norm_min": 1200, "norm_max": 1600,
+          "warn_min": 1250, "warn_max": 1620,
+          "crit_min": 1200, "crit_max": 1700, "persist": 5,
+          "description": "Shaft speed (flow starvation < 1200)" }
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "kind": "simulator",
+      "asset_id": "pump1",
+      "params": {
+        "sample_freq_s": 1.0,
+        "regime": "degrade",
+        "uptime_h": 200,
+        "base_temp": 62.0
+      }
+    }
+  ]
+}

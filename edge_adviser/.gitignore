@@ -1,0 +1,8 @@
+# Runtime data — regenerable from sources
+workspace/
+sessions/
+__pycache__/
+*.pyc
+
+# Keep the reference workspace knowledge-assets if you want them versioned;
+# remove the `workspace/` line above to track ASSET.md / MEMORY.md / reports.
