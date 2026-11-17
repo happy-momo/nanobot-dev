@@ -11,6 +11,19 @@ tests/_tmp_*
 webui/node_modules/
 webui/dist/
 
+# Vite / dev caches
+webui/.vite/
+webui/*.local
+webui/*.log
+
+# Editor / OS noise
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
 # HMI per-asset runtime sidecar produced by the alert loop
 workspace/**/alerts.jsonl
 
