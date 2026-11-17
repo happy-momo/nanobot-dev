@@ -20,6 +20,7 @@ from ..config.model import AdviserConfig, AssetSpec, ModelRole
 from ..core.asset_store import AssetStore
 from ..llm.gateway import LLMGateway, LLMResult
 from ..llm.providers import asset_session
+from .badge import build_badge, render_frontmatter
 
 _REPORT_PROMPT = """You are a senior industrial reliability engineer.
 A deterministic analytics engine produced the following FACTUAL snapshot about
@@ -30,6 +31,13 @@ The snapshot is ground truth: do not invent numbers. Use the asset profile for
 units and normal ranges, and the provided historical knowledge to explain
 trends or recommend actions.
 
+The DATA-SCOPE block below is a machine-generated, ground-truth record of the
+data that produced this snapshot (sample count, coverage, window, provider,
+degradation). Reference its values in the "Confidence & Data Scope" section and
+DO NOT invent, rewrite, contradict, or omit them. If trust is low or the data is
+insufficient/stale, say so and recommend re-checking data acquisition before
+acting on any recommendation.
+
 Produce this section structure:
 # <Asset Name> — Operational Report
 ## Executive Summary       (2-3 sentences: overall state, top risk)
@@ -38,6 +46,9 @@ Produce this section structure:
 ## Assessment              (what the numbers mean for the asset)
 ## Recommendations         (prioritized list of actions)
 ## Confidence & Data Scope (sampling window, source, any limitations)
+
+DATA-SCOPE (machine generated):
+{badge}
 
 Current date: {date_text}
 """
@@ -67,12 +78,14 @@ class ReportGenerator:
         if ab:
             blocks.append(ab)
         blocks.append(builder.build_snapshot_block(snapshot))
-        kb = builder.build_knowledge_block(asset.asset_id)
+        kb = builder.build_knowledge_block(asset.asset_id, query=str(snapshot.get("headline", "")))
         if kb:
             blocks.append(kb)
 
+        badge_md = render_frontmatter(build_badge(snapshot))
         prompt = _REPORT_PROMPT.format(
             date_text=datetime.now().strftime("%Y-%m-%d %H:%M"),
+            badge=badge_md,
         )
         session_key = asset_session(asset.asset_id, "report")
         return await self.gateway.run(
@@ -84,15 +97,25 @@ class ReportGenerator:
 
     def archive(self, asset: AssetSpec, snapshot: dict[str, Any],
                 report_md: str, *, source: str = "", degraded: bool = False,
-                provider: str = "") -> Path:
+                provider: str = "", generated_at: str | None = None) -> Path:
         """Write report.md + snapshot.json into the dated report folder.
-        Returns the report directory."""
+        Returns the report directory.
+
+        Prepends a machine-generated DATA-SCOPE front-matter so the report's data
+        provenance is deterministic and auditable, independent of the model.
+        """
         day = datetime.now().strftime("%Y-%m-%d")
         out = self.store.reports_dir(asset.asset_id) / day
         out.mkdir(parents=True, exist_ok=True)
 
+        # P3: the badge is written directly (deterministic), not left to the model.
+        meta = build_badge(snapshot, provider=provider, degraded=degraded,
+                           generated_at=generated_at or datetime.now().isoformat(timespec="seconds"))
+        front = render_frontmatter(meta)
         md = (
             f"<!-- asset: {asset.asset_id} | generated: {datetime.now().isoformat(timespec='seconds')} | provider: {provider} | degraded: {degraded} -->\n"
+            f"{front}"
+            f"{'--- end data-scope ---'}\n\n"
             f"{report_md}\n"
         )
         (out / "report.md").write_text(md, encoding="utf-8")
@@ -103,6 +126,7 @@ class ReportGenerator:
             "provider": provider,
             "degraded": degraded,
             "source": source,
+            "meta": meta.to_dict(),
             "snapshot": snapshot,
         }
         (out / "snapshot.json").write_text(

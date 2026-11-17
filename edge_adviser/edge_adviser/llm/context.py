@@ -17,6 +17,7 @@ from nanobot import RequestContext, RuntimeContextBlock
 
 from ..config.model import AdviserConfig, AssetSpec
 from ..core.asset_store import AssetStore
+from ..core.memory_service import MemoryService
 
 
 def _encode(text: str) -> str:
@@ -44,13 +45,26 @@ class ContextBuilder:
         self.config = config
         self.store = store
 
-    # -- retrieval: pull the most recent knowledge from the asset's MEMORY.md --
-    def retrieve_knowledge(self, asset_id: str) -> list[str]:
+    # -- retrieval: pull the most relevant knowledge from the asset's MEMORY.md --
+    def retrieve_knowledge(self, asset_id: str, query: str = "") -> list[str]:
+        # N6: when the keyword index is enabled, retrieve by query relevance;
+        # otherwise keep the legacy naive "most recent" retrieval byte-for-byte.
+        if self.config.memory_index == "keywords":
+            asset = self.config.asset(asset_id)
+            if asset is None:
+                return []
+            svc = MemoryService(
+                asset, self.config.workspace,
+                index="keywords",
+                conflict_policy=self.config.memory_conflict_policy,
+                decay_s=self.config.memory_decay_s,
+            )
+            return svc.retrieve(query=query, top_k=self.config.history_top_k,
+                                max_chars=self.config.history_max_chars)
+        # ---- legacy naive retrieval (unchanged) ----
         mem = self.store.read_memory_md(asset_id)
         if not mem:
             return []
-        # naive retrieval: newest sections (separated by headings). In production
-        # this becomes proper chunking + a lightweight vector/keyword index.
         blocks = [b.strip() for b in mem.split("\n## ") if b.strip()]
         # sort by implicit recency (assumes MEMORY.md appends newest) and top-k
         blocks = blocks[-self.config.history_top_k:]
@@ -84,8 +98,8 @@ class ContextBuilder:
         txt = json.dumps(snapshot, ensure_ascii=False, indent=1)
         return _block("analytics-snapshot", txt)
 
-    def build_knowledge_block(self, asset_id: str) -> RuntimeContextBlock | None:
-        blocks = self.retrieve_knowledge(asset_id)
+    def build_knowledge_block(self, asset_id: str, query: str = "") -> RuntimeContextBlock | None:
+        blocks = self.retrieve_knowledge(asset_id, query)
         if not blocks:
             return None
         text = "Known insights about this asset from past analysis:\n" + "\n".join(

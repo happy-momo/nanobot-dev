@@ -34,6 +34,7 @@ def _metric_from_dict(d: dict[str, Any]) -> MetricSpec:
         crit_max=d.get("crit_max"),
         description=d.get("description", ""),
         persist=d.get("persist", 1),
+        min_samples=d.get("min_samples", 0),
     )
 
 
@@ -47,6 +48,7 @@ def asset_from_dict(d: dict[str, Any]) -> AssetSpec:
         scenario_notes=list(d.get("scenario_notes", [])),
         sample_freq_s=d.get("sample_freq_s", 1.0),
         window_s=d.get("window_s", 60),
+        downtime_windows=list(d.get("downtime_windows", [])),
     )
 
 
@@ -96,6 +98,15 @@ def load_config(path: str | Path) -> AdviserConfig:
         learn_cron=raw.get("learn_cron", "0 3 * * *"),
         history_top_k=raw.get("history_top_k", 6),
         history_max_chars=raw.get("history_max_chars", 2400),
+        data_freshness_s=raw.get("data_freshness_s", 3600),
+        coverage_threshold=raw.get("coverage_threshold", 0.8),
+        max_empty_windows=raw.get("max_empty_windows", 3),
+        analysis_regime=raw.get("analysis_regime", "clean"),
+        learn_gate=raw.get("learn_gate", "soft"),
+        memory_index=raw.get("memory_index", "off"),
+        memory_conflict_policy=raw.get("memory_conflict_policy", "flag"),
+        memory_decay_s=raw.get("memory_decay_s", 7776000),
+        runlog_enabled=raw.get("runlog_enabled", True),
     )
 
 

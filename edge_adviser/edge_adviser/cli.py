@@ -89,6 +89,8 @@ def _supervisor(c: _Context) -> Supervisor:
     return Supervisor(
         config=c.config, store=c.store, gateway=c.gateway,
         report_gen=c.report_gen, learner=c.learner,
+        # N9: pass the configured analysis-regime label (no hardcoded "degrade").
+        default_regime=c.config.analysis_regime,
     )
 
 
@@ -155,14 +157,22 @@ async def _cmd_serve(c: _Context) -> None:
     try:
         while True:
             for asset in c.config.assets:
-                src = c.store  # noqa (dead)
-                _snap = await sup.run_once(asset)
+                try:
+                    snap = await sup.run_once(asset)
+                except Exception as exc:
+                    print(f"[serve] run err {asset.asset_id}: {exc}")
+                    continue
+                # P4: surface (rather than discard) a failed/empty window so the
+                # operator sees why a report may be missing.
+                if isinstance(snap, dict) and snap.get("error"):
+                    print(f"[serve] {asset.asset_id}: run not OK — {snap.get('error')} "
+                          f"(state={snap.get('status', snap.get('error'))})")
                 now = time.time()
                 if now - last_deep.get(asset.asset_id, 0) >= 86400:
                     try:
                         await sup.run_deep_report(asset)
                     except Exception as exc:
-                        print(f"[serve] deep report err: {exc}")
+                        print(f"[serve] deep report err {asset.asset_id}: {exc}")
                     last_deep[asset.asset_id] = now
             await asyncio.sleep(c.config.monitor_interval_s)
     finally:

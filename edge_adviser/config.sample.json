@@ -6,6 +6,15 @@
   "defaults": {
     "config_path": "nanobot.runtime.json"
   },
+  "analysis_regime": "clean",
+  "data_freshness_s": 1800,
+  "coverage_threshold": 0.8,
+  "max_empty_windows": 3,
+  "learn_gate": "soft",
+  "memory_index": "off",
+  "memory_conflict_policy": "flag",
+  "memory_decay_s": 7776000,
+  "runlog_enabled": true,
   "providers": {
     "online": {
       "model_preset": "primary",
@@ -32,6 +41,9 @@
       "description": "High-pressure feed pump for the cement raw-mill slurry line.",
       "sample_freq_s": 1.0,
       "window_s": 60,
+      "downtime_windows": [
+        { "start": "2026-01-01T00:00:00Z", "end": "2026-01-01T08:00:00Z" }
+      ],
       "scenario_notes": [
         "Pump P-201 feeds raw slurry to the cement mill at 30 m3/h nominal.",
         "Vibration above 4.5 mm/s historically preceded bearing replacement.",
@@ -41,7 +53,7 @@
       "metrics": [
         { "key": "temp", "unit": "degC", "norm_max": 68,
           "warn_max": 68, "warn_min": null,
-          "crit_max": 73, "persist": 5,
+          "crit_max": 73, "persist": 5, "min_samples": 30,
           "description": "Bearing housing temperature" },
         { "key": "vibration", "unit": "mm/s", "norm_max": 3.0,
           "warn_max": 3.0, "crit_max": 4.5, "persist": 5,

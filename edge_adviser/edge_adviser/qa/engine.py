@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..config.model import AdviserConfig, AssetSpec, ModelRole
+from ..analytics.gates import gate_snapshot_for_read
 from ..core.asset_store import AssetStore
 from ..llm.gateway import LLMGateway, LLMResult
 from ..llm.providers import asset_session
@@ -45,19 +46,33 @@ class QAEngine:
             return None
 
     async def ask(self, asset: AssetSpec, question: str,
-                  *, role: ModelRole = ModelRole.ROUTINE) -> LLMResult:
-        """Answer a free-form question about an asset."""
+                  *, role: ModelRole = ModelRole.ROUTINE,
+                  allow_stale: bool = False) -> LLMResult:
+        """Answer a free-form question about an asset.
+
+        Gated on a fresh snapshot: without one (or one that is stale), we REFUSE
+        to drive the model and return a deterministic "no data to assess" instead
+        of letting the model fabricate from an empty snapshot block. Pass
+        allow_stale=True to suppress the gate (e.g. for manual debugging).
+        """
         from ..llm.context import ContextBuilder
 
+        gate = gate_snapshot_for_read(self.store, asset, self.config)
+        if not gate.ok and not allow_stale:
+            return LLMResult(
+                content=f"无数据可评估：该资产当前无有效快照（{gate.reason}）。",
+                error=f"no_fresh_snapshot: {gate.reason}",
+            )
+        snapshot = gate.snapshot or self._latest_snapshot(asset.asset_id)
+
         builder = ContextBuilder(self.config, self.store)
-        snapshot = self._latest_snapshot(asset.asset_id)
         blocks: list[Any] = []
         ab = builder.build_asset_block(asset)
         if ab:
             blocks.append(ab)
         if snapshot:
             blocks.append(builder.build_snapshot_block(snapshot))
-        kb = builder.build_knowledge_block(asset.asset_id)
+        kb = builder.build_knowledge_block(asset.asset_id, query=question)
         if kb:
             blocks.append(kb)
         pc = builder.build_prev_conclusion_block(asset.asset_id)

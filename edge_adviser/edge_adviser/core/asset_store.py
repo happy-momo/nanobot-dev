@@ -56,6 +56,10 @@ class AssetStore:
     def feedback_path(self, asset_id: str) -> Path:
         return self.asset_dir(asset_id) / "feedback.jsonl"
 
+    def runlog_path(self, asset_id: str) -> Path:
+        """Path to the append-only audit ledger for an asset (sibling of reports/)."""
+        return self.asset_dir(asset_id) / "runlog.jsonl"
+
     # ------------------------------------------------------------------ #
     # asset metadata
     # ------------------------------------------------------------------ #
@@ -119,6 +123,28 @@ class AssetStore:
                     except json.JSONDecodeError:
                         continue
         return out
+
+    # ------------------------------------------------------------------ #
+    # runlog (audit ledger, P2) — append-only JSON lines
+    # ------------------------------------------------------------------ #
+    def append_runlog(self, asset_id: str, record: dict[str, Any]) -> None:
+        with open(self.runlog_path(asset_id), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def read_runlog(self, asset_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        p = self.runlog_path(asset_id)
+        if not p.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        out.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        return out[-limit:]
 
 
 def create_asset_memory_store(asset: AssetSpec, workspace: Path) -> NanobotMemoryStore:

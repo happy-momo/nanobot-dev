@@ -4,5 +4,8 @@ sessions/
 __pycache__/
 *.pyc
 
+# Test scratch dirs (only a few fallback paths; pytest's tmp_path auto-cleans)
+tests/_tmp_*
+
 # Keep the reference workspace knowledge-assets if you want them versioned;
 # remove the `workspace/` line above to track ASSET.md / MEMORY.md / reports.

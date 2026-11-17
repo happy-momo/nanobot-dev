@@ -37,6 +37,36 @@ class AlertLevel(str, Enum):
     INFO = "info"
     WARN = "warn"
     CRITICAL = "critical"
+    # Trustworthiness-first additions: these do NOT mean a real alarm fired.
+    # Real production data still yields only info/warn/critical. INSUFFICIENT
+    # (n>0 but below min_samples) and UNKNOWN (n==0) are data-coverage verdicts
+    # so that sparse/empty windows are never reported as "nominal".
+    INSUFFICIENT = "insufficient"
+    UNKNOWN = "unknown"
+
+
+class AssetState(str, Enum):
+    """Machine/data-state verdict used across snapshot + read-gates + learn gate.
+
+    ``healthy``/``partial`` are the only states where the data is trustworthy
+    enough for confident conclusions. The rest are data-integrity verdicts that
+    must stop (or downgrade) model interpretation.
+    """
+    HEALTHY = "healthy"            # data sufficient + fresh
+    PARTIAL = "partial"            # data present but coverage below threshold
+    INSUFFICIENT = "insufficient"  # data present but below min_samples
+    UNKNOWN = "unknown"            # no data at all (n==0)
+    OFFLINE = "offline"            # consecutive empty windows -> abnormal disconnection
+    STALE = "stale"                # data exists but read past its freshness window
+    PLANNED_DOWNTIME = "planned_downtime"  # inside a configured planned-downtime window
+
+
+class TrustLevel(str, Enum):
+    """Deterministic trust mapping from AssetState (pure logic, not LLM-judged)."""
+    FULL = "full"
+    PARTIAL = "partial"
+    LOW = "low"
+    NONE = "none"
 
 
 class ModelRole(str, Enum):
@@ -62,9 +92,64 @@ class MetricSpec:
     description: str = ""
     # how long a value must stay outside a band (in samples/window) before it counts
     persist: int = 1
+    # minimum number of samples required before this metric yields a confident
+    # (info/warn/critical) verdict. 0 = no lower bound (legacy behavior). Below
+    # this the metric is tagged INSUFFICIENT so sparse data is never reported
+    # as nominal — a data-quality gate, not an alarm.
+    min_samples: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict-like(self)
+
+
+# --------------------------------------------------------------------------- #
+# Trustworthiness badge / metadata + audit ledger record.
+# --------------------------------------------------------------------------- #
+@dataclass
+class MetaData:
+    """Machine-generated ground-truth about a snapshot's data scope.
+
+    Rendered as the front-matter of a report so the LLM references *deterministic*
+    facts about coverage/provider/degradation instead of re-deriving (and possibly
+    inventing) them. Constructor-level fields are set by the allocator; the rest
+    default to a safe/empty state so a minimal dict never crashes rendering.
+    """
+    asset_id: str = ""
+    status: AssetState = AssetState.HEALTHY
+    trust: TrustLevel = TrustLevel.FULL
+    sample_count: int = 0
+    expected_samples: int = 0
+    coverage: float = 0.0              # 0..1 ratio of actual / expected samples
+    window_start: str = ""
+    window_end: str = ""
+    actual_span_s: float = 0.0
+    data_source: str = ""
+    provider: str = ""
+    degraded: bool = False
+    generated_at: str = ""
+    state_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        d = asdict(self)
+        d["status"] = self.status.value
+        d["trust"] = self.trust.value
+        return d
+
+
+@dataclass
+class RunLogEntry:
+    """One append-only audit record saying what happened (incl. failures) so a
+    missing report day is traceable instead of silently absent."""
+    asset_id: str = ""
+    date: str = ""            # YYYY-MM-DD
+    kind: str = ""            # run_once|monitor|deep_report|learn|qa|serve_start
+    outcome: str = ""         # ok|no_data|provider_failed|exception|gated
+    reason: str = ""
+    detail: str = ""
+    timestamp: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 # --------------------------------------------------------------------------- #
@@ -82,6 +167,9 @@ class AssetSpec:
     # sampling
     sample_freq_s: float = 1.0
     window_s: int = 60
+    # planned-downtime windows during which an empty window is EXPECTED (not an
+    # offline fault). Each entry: {"start": iso, "end": iso}. Empty = no windows.
+    downtime_windows: list[dict] = field(default_factory=list)
 
     def metric(self, key: str) -> MetricSpec | None:
         return next((m for m in self.metrics if m.key == key), None)
@@ -135,6 +223,34 @@ class AdviserConfig:
     # context budget for offline model routing
     history_top_k: int = 6
     history_max_chars: int = 2400
+
+    # ---- trustworthiness / data-integrity tuning (defaults == legacy behavior) ----
+    # P1: how old a snapshot (window_end vs now) may be before it is treated as
+    # missing/stale by the read gates (ask/monitor/report) and the learn gate.
+    data_freshness_s: int = 3600
+    # N2: coverage ratio (actual/expected samples) below this marks the snapshot
+    # PARTIAL (analyzable but low-confidence).
+    coverage_threshold: float = 0.8
+    # N4: consecutive empty windows before the machine is judged OFFLINE
+    # (abnormal disconnection), as opposed to a transient gap.
+    max_empty_windows: int = 3
+    # N9: regime label injected by the scheduler (replaces the hardcoded
+    # "degrade"); a transport label, not the simulator's internal regime.
+    analysis_regime: str = "clean"
+    # N7: learn input gate. off = legacy unconditional; soft = inject a
+    # deterministic [confidence: low] declaration and write back; strict = skip
+    # the learn pass (no LLM, no MEMORY.md write) on untrustworthy input.
+    learn_gate: str = "soft"
+    # N6: memory retrieval. off = legacy "most recent" retrieval; keywords = a
+    # lightweight stdlib relevance index (query-driven top-k).
+    memory_index: str = "off"
+    # N8: memory conflict/staleness handling. off = ignore; flag = track claims
+    # and mark numeric contradictions + expired facts for the retriever.
+    memory_conflict_policy: str = "flag"
+    # N8: a claim older than this (seconds) is considered stale during retrieval.
+    memory_decay_s: int = 7776000  # 90 days
+    # P2: record append-only runlog.jsonl for every asset.
+    runlog_enabled: bool = True
 
     def asset(self, asset_id: str) -> AssetSpec | None:
         return next((a for a in self.assets if a.asset_id == asset_id), None)
