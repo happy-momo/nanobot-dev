@@ -107,6 +107,9 @@ def load_config(path: str | Path) -> AdviserConfig:
         memory_conflict_policy=raw.get("memory_conflict_policy", "flag"),
         memory_decay_s=raw.get("memory_decay_s", 7776000),
         runlog_enabled=raw.get("runlog_enabled", True),
+        hmi_pin=raw.get("hmi_pin", "none"),
+        hmi_host=raw.get("hmi_host", "0.0.0.0"),
+        hmi_port=raw.get("hmi_port", 8000),
     )
 
 

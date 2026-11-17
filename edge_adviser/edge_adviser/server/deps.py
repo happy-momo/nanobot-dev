@@ -1,0 +1,89 @@
+"""Compose the runtime services behind the FastAPI HMI server.
+
+This mirrors ``cli._build``/``cli._supervisor`` so the web layer reuses exactly the
+same objects the CLI drives. The server never mutates the fact spine; it only
+exposes and triggers the existing deterministic services.
+
+The HMI keeps the "deterministic facts vs LLM interpretation" split visible:
+read-side endpoints return snapshots as ground truth, action endpoints always go
+through the freshness gate (``gate_snapshot_for_read``) so a missing/stale
+snapshot is refused instead of driving the model to guess.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from ..config import load_config
+from ..config.model import AdviserConfig
+from ..core.asset_store import AssetStore
+from ..core.bus import EventBus
+from ..core.scheduler import Supervisor
+from ..learn import FeedbackService
+from ..learn.learner import Learner
+from ..llm.context import ContextBuilder
+from ..llm.gateway import LLMGateway
+from ..qa.engine import QAEngine
+from ..report.generator import ReportGenerator
+
+
+class AppState:
+    """Hold every service + the event bus so routers can inject just what they need."""
+
+    def __init__(self, config: AdviserConfig, store: AssetStore, gateway: Any | None = None):
+        self.config = config
+        self.store = store
+
+        self.bus = EventBus(replay=1)
+
+        ctx = ContextBuilder(config, store)
+        # allow a stub gateway to be injected for offline tests; the real
+        # LLMGateway is the default production wiring.
+        if gateway is None:
+            gateway = LLMGateway(config, ctx)
+        self.gateway = gateway
+        self.report_gen = ReportGenerator(config, store, self.gateway)
+        self.learner = Learner(config, store, self.gateway)
+        self.qa = QAEngine(config, store, self.gateway)
+        self.feedback = FeedbackService(store)
+
+        self.supervisor = Supervisor(
+            config=config,
+            store=store,
+            gateway=self.gateway,
+            report_gen=self.report_gen,
+            learner=self.learner,
+            default_regime=config.analysis_regime,
+        )
+
+    async def start(self) -> None:
+        await self.supervisor.start()
+
+    async def stop(self) -> None:
+        await self.supervisor.stop()
+        await self.bus.aclose()
+
+
+def build_state(config_path: str | Path, gateway: Any | None = None) -> AppState:
+    """Load the config from disk and build the full service graph.
+
+    The workspace is resolved against the config file's directory so a daemon or
+    manual launch is consistent regardless of the process CWD (fixes a CLI trap).
+    """
+    cfg = load_config(config_path)
+    if not cfg.workspace.is_absolute():
+        base = Path(config_path).resolve().parent
+        cfg.workspace = (base / cfg.workspace).resolve()
+    store = AssetStore(cfg.workspace)
+    for asset in cfg.assets:
+        store.ensure_asset(asset)
+    return AppState(cfg, store, gateway=gateway)
+
+
+async def publish_error(state: AppState, kind: str, asset_id: str, error: str, **extra: Any) -> None:
+    """Best-effort bus publish that never raises into a request handler."""
+    try:
+        await state.bus.publish(kind, asset_id, payload={"error": error, **extra})
+    except Exception:  # noqa: BLE001
+        pass

@@ -97,6 +97,61 @@ class AssetStore:
         files = sorted(self.snapshots_dir(asset_id).glob("*.json"), reverse=True)
         return files[:limit]
 
+    def read_persisted_snapshot(self, asset_id: str, filename: str) -> dict[str, Any] | None:
+        """Read one saved snapshot by its (sanitized-window-end) filename.
+
+        `filename` may be bare ("2026-....json") or the full path returned by
+        ``list_snapshots``. Returns None if missing/unparseable.
+        """
+        p = Path(filename)
+        if not p.is_absolute():
+            p = self.snapshots_dir(asset_id) / p.name
+        if not p.exists():
+            return None
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    # ------------------------------------------------------------------ #
+    # archived reports (<date>/report.md + snapshot.json)
+    # ------------------------------------------------------------------ #
+    def list_reports(self, asset_id: str) -> list[dict[str, Any]]:
+        """Return archived report summaries (newest first) for an asset.
+
+        Each entry: {date, report_md, meta, degraded, provider, count}.
+        """
+        out: list[dict[str, Any]] = []
+        rd = self.reports_dir(asset_id)
+        for day in sorted(rd.iterdir(), reverse=True):
+            if not day.is_dir() or not day.name[:4].isdigit():
+                continue
+            day_md = day / "report.md"
+            day_json = day / "snapshot.json"
+            entry: dict[str, Any] = {"date": day.name, "report_md": None, "meta": {},
+                                     "snapshot": None, "degraded": False, "provider": ""}
+            if day_md.exists():
+                entry["report_md"] = day_md.read_text(encoding="utf-8")
+            if day_json.exists():
+                try:
+                    doc = json.loads(day_json.read_text(encoding="utf-8"))
+                    entry["meta"] = doc.get("meta") or {}
+                    entry["snapshot"] = doc.get("snapshot")
+                    entry["degraded"] = bool(doc.get("degraded"))
+                    entry["provider"] = doc.get("provider", "")
+                except json.JSONDecodeError:
+                    pass
+            out.append(entry)
+        return out
+
+    def read_report(self, asset_id: str, date: str) -> dict[str, Any] | None:
+        """Read one archived report day. Returns list_reports-style dict or None."""
+        day = self.reports_dir(asset_id) / date
+        if not day.is_dir():
+            return None
+        matches = [r for r in self.list_reports(asset_id) if r["date"] == date]
+        return matches[0] if matches else None
+
     # ------------------------------------------------------------------ #
     # feedback (operator corrections → learn loop)
     # ------------------------------------------------------------------ #

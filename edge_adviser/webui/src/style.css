@@ -1,0 +1,47 @@
+:root {
+  --ea-bg: #0f1f2d;
+  --ea-panel: #15293a;
+  --ea-panel-soft: #1c3347;
+  --ea-border: #26415a;
+  --ea-text: #e8f0f7;
+  --ea-text-muted: #8fa6bb;
+  --ea-accent: #3f8ff7;
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app { height: 100%; margin: 0; }
+
+body {
+  background: var(--ea-bg);
+  color: var(--ea-text);
+  font-size: 14px;
+  transition: background 0.2s ease;
+}
+
+/* dark overrides for Element Plus surface colors */
+.el-card, .el-table, .el-dialog, .el-drawer, .el-message-box, .el-select-dropdown {
+  --el-bg-color: var(--ea-panel);
+  --el-bg-color-overlay: var(--ea-panel);
+  --el-border-color-light: var(--ea-border);
+  --el-text-color-primary: var(--ea-text);
+  --el-text-color-regular: var(--ea-text-muted);
+}
+.el-card { background: var(--ea-panel); border-color: var(--ea-border); color: var(--ea-text); }
+.el-table { background: transparent; --el-table-border-color: var(--ea-border); --el-table-header-bg-color: #12283a; --el-table-row-hover-bg-color: #1c3347; }
+
+.page { padding: 16px; max-width: 1500px; margin: 0 auto; }
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+
+/* numeric values — tabular so digits don't jitter */
+.num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-weight: 600; }
+
+/* big readable headline metric */
+.big-value { font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 700; line-height: 1; }
+
+/* muted text */
+.muted { color: var(--ea-text-muted); }
+
+/* keep touch targets friendly for the field tablet */
+button, .el-button, .el-radio-button__inner { min-height: 30px; }

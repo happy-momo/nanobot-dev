@@ -252,6 +252,15 @@ class AdviserConfig:
     # P2: record append-only runlog.jsonl for every asset.
     runlog_enabled: bool = True
 
+    # ---- HMI (human-machine interface) settings ----------------------------
+    # Optional shared access PIN for the web UI. "none" (default) = LAN open.
+    # Any other string enables a shared-pin gate: the UI exchanges it for a
+    # short-lived HMAC token via POST /api/auth/pin.
+    hmi_pin: str = "none"
+    # Web server bind config for the built-in `edge-adviser serve --web` mode.
+    hmi_host: str = "0.0.0.0"
+    hmi_port: int = 8000
+
     def asset(self, asset_id: str) -> AssetSpec | None:
         return next((a for a in self.assets if a.asset_id == asset_id), None)
 

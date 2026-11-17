@@ -94,6 +94,37 @@ python -m edge_adviser.cli serve  config.sample.json
 PYTHONPATH=$PWD/edge_adviser python -m pytest edge_adviser/tests -q
 ```
 
+### 5. 现场人机交互界面（B/S HMI）
+
+0.3.x 提供一套给现场人员用的 Web 界面：**确定性事实与 LLM 解读分层展示**，弱网/离线可用，可追溯审计。技术栈：FastAPI 后端 + Vue3/Element Plus/ECharts 前端（静态打包，单端口）。
+
+```bash
+# 1) 构建前端（Vue3 + Vite + Element Plus + ECharts）
+cd edge_adviser/webui
+npm install
+npm run build                # 产物 webui/dist/
+
+# 2) 启动后端（FastAPI 托管 API + SSE + 已构建前端，单端口）
+cd edge_adviser
+PYTHONPATH=$PWD/edge_adviser python -m edge_adviser.cli web config.sample.json
+# 或：PYTHONPATH=$PWD/edge_adviser python -m uvicorn edge_adviser.server.app:app_factory \
+#       --env EDGE_ADVISER_CONFIG=config.sample.json --host 0.0.0.0 --port 8000
+
+# 3) 打开浏览器 http://<host>:8000/
+```
+
+**页面**：总览(Dashboard)、实时监控(Monitor)、告警中心(Alerts)、深度报告(Reports)、智能问答(Q&A)、知识库(Knowledge)、反馈(Feedback)、设备管理(Assets)、审计(Runlog)、系统设置(Settings)。
+
+**界面与 0.2.0 可信度契约一致**：
+- **状态色与可信色分离**：`状态`（healthy/warn/critical/insufficient/unknown/offline/stale/计划停机）与`信任度`（full/partial/low/none）独立徽章并排——"状态"和"数据可信度"是两件事，同时可见。
+- **无新鲜快照即确定性拒绝**：`ask/monitor/report` 走门禁；无新鲜数据时界面明确显示"无新鲜快照，已拒绝回答"，**不驱动模型猜**。
+- **报告含机器生成 DATA-SCOPE 徽章**：顶部固定数据范围/覆盖率/Provider/是否降级，模型不得改写。
+- **告警去重/去抖**：只对真实状态变化报警（真实告警级 OR 断连/过时），计划停机豁免；未确认前不重复刷屏；操作员可确认。
+- **审计可追溯**：Runlog 页面逐日展示 run/报告/学习结果，缺失/失败日标出，可对账。
+- **深色工业风 + 角色折叠**：操作工/工程师视图切换，触控友好，弱网离线仍可看最近快照（前端缓存）。
+
+**访问控制**：`hmi_pin`（`config` 顶部）为 `"none"` 时局域网开放；设为字符串则启用共享 PIN，浏览器先 `POST /api/auth/pin` 换短期 HMAC token。
+
 ## 目录结构
 
 ```
@@ -107,7 +138,11 @@ edge_adviser/
     report/     报告生成与归档
     learn/      历史学习(MEMORY.md 固化) + 反馈
     qa/         人工问答引擎
+    server/     HMI 后端：FastAPI(REST/SSE)、事件总线、告警、共享 PIN
     cli.py      命令行入口
+  webui/               现场 HMI 前端（Vue3 + Vite + Element Plus + ECharts）
+    src/                视图/组件/主题(stores, router, components, views, theme)
+    dist/              构建产物，由后端托管（npm run build 生成，gitignored）
   config.sample.json     示例配置
   nanobot.runtime.json   nanobot 模型预设
   workspace/assets/<id>/ 每台设备的：

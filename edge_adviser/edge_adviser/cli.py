@@ -9,8 +9,14 @@ Commands:
     edge-adviser ask <config> <asset> "<question>"   Q&A style status query
     edge-adviser feedback <config> <asset> "<note>"  record operator feedback
     edge-adviser serve <config>          run the long-lived supervisor loop
+    edge-adviser web <config> [--host H] [--port P]   serve the B/S HMI (FastAPI)
 
 Uses the same nanobot config/workspace wiring as the SDK.
+
+`web` serves the human-machine interface: a FastAPI backend (REST /api + SSE
+/stream) plus the built Vue SPA. Build the frontend first:
+    cd edge_adviser/webui && npm install && npm run build
+Then `edge-adviser web <config>` (default http://0.0.0.0:8000/).
 """
 
 from __future__ import annotations
@@ -179,6 +185,29 @@ async def _cmd_serve(c: _Context) -> None:
         await sup.stop()
 
 
+async def _cmd_web(c: _Context, host: str | None, port: int | None) -> int:
+    """Serve the B/S human-machine interface (FastAPI + built SPA).
+
+    Rebuild the frontend first: `cd edge_adviser/webui && npm install && npm run build`.
+    Otherwise the API is served and `/` returns a hint pointing at the build dir.
+    """
+    import uvicorn
+    from .server.app import create_app, _DIST
+
+    app = create_app(c.config.defaults.get("_source_file", "config.json"))
+    bind_host = host or getattr(c.config, "hmi_host", "0.0.0.0")
+    bind_port = port or getattr(c.config, "hmi_port", 8000)
+    if not _DIST.exists():
+        print(f"[web] frontend not built; expected at {_DIST}")
+        print("[web]   cd edge_adviser/webui && npm install && npm run build")
+    print(f"[web] EdgeAdviser HMI -> http://{bind_host}:{bind_port}/  "
+          f"(api=/api, sse=/stream)")
+    cfg = uvicorn.Config(app, host=bind_host, port=bind_port, log_level="info")
+    server = uvicorn.Server(cfg)
+    await server.serve()
+    return 0
+
+
 def json_dumps(obj) -> str:
     import json
     return json.dumps(obj, ensure_ascii=False, indent=2)
@@ -201,6 +230,9 @@ def main(argv: list[str] | None = None) -> int:
     p = add("ask", "Q&A"); p.add_argument("asset"); p.add_argument("question")
     p = add("feedback", "record feedback"); p.add_argument("asset"); p.add_argument("note")
     add("serve", "run supervisor loop")
+    pw = add("web", "serve the B/S human-machine interface (FastAPI)")
+    pw.add_argument("--host", default=None)
+    pw.add_argument("--port", type=int, default=None)
 
     args = parser.parse_args(argv)
     c = _build(args.config)
@@ -222,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
             await _cmd_feedback(c, args.asset, args.note)
         elif args.cmd == "serve":
             await _cmd_serve(c)
+        elif args.cmd == "web":
+            return await _cmd_web(c, host=args.host, port=args.port)
         return 0
 
     try:

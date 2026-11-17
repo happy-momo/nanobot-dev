@@ -4,6 +4,47 @@
 
 ---
 
+## 0.3.0 — 2026-11-18（现场人机交互界面 HMI）
+
+在 CLI 之上叠加一套 **B/S 现场人机界面**，让运维/巡检/工程师无需敲命令即可掌握设备状态并追溯审计。**不改动 nanobot 内核**，全部新增在 `edge_adviser/` 内。
+
+### 新增内容
+
+| 模块 | 内容 | 说明 |
+|---|---|---|
+| `server/app.py` | `create_app()` + lifespan | FastAPI 应用：组装服务、后台启动 Supervisor 调度 task、托管 Vue SPA |
+| `server/deps.py` | `AppState`/`build_state` | 组合 CL/`Supervisor` 同款服务图；workspace 相对路径按配置文件目录解析（修复 CLI 的 CWD 隐患）|
+| `server/router_*.py` | REST 读侧 API | assets/snapshots/reports/knowledge/feedback/runlog/overview/config/health/version |
+| `server/router_actions.py` | 写侧动作 + SSE | run-now/report/learn/ask；/stream/telemetry /alerts /task |
+| `server/alerts.py` | 告警派生/去重/确认 | 真实告警级(warn/critical) OR 数据故障(offline/stale) 才告警；计划停机/数据覆盖判定豁免；未确认前去重 |
+| `server/security.py` | 可选共享 PIN | `hmi_pin` 非 none 时启用，HMAC 短期 token，无用户表（LAN 内部边界）|
+| `server/schemas.py` | 统一响应信封 | `{ok, data, error}`；门禁拒绝仍 200 返回，前端渲染为确定性拒绝而非异常 |
+| `core/bus.py` | 进程内事件总线 | async pub/sub + replay，供 SSE 流分发新快照/告警 |
+| `core/asset_store.py` | 补 list_reports/read_report/read_persisted_snapshot | API 层直达归档报告/快照 |
+| `webui/` | Vue3 + Vite + Element Plus + ECharts 前端 | 10 页面 + 深色工业风主题 + 状态/可信色分离 + 角色折叠 |
+| `cli.py` | `web` 子命令 | 一条命令启动 HMI（`edge-adviser web <config>`）|
+| `config/model.py` + loader | `hmi_pin/hmi_host/hmi_port` | HMI 访问控制与绑定配置（缺省=开放，向后兼容）|
+| `config.sample.json` | 补 hmi 字段 | |
+
+### 界面与可信度契约（关键设计）
+
+- **状态色与可信色分离**：状态（healthy/warn/critical/insufficient/unknown/offline/stale/计划停机）与信任度（full/partial/low/none）独立徽章并排，同时可见。
+- **无新鲜快照即确定性拒绝**：ask/monitor/report 走门禁；界面明确显示"无新鲜快照，已拒绝回答"，不驱动模型猜。
+- **报告含机器生成 DATA-SCOPE 徽章**：top 固定，模型不得改写。
+- **告警去重/去抖**：真实状态变化才报，计划停机豁免，未确认前不重复刷屏，可确认。
+- **审计可追溯**：Runlog 逐日展示结果，缺失/失败日标出。
+- **深色工业风 + 触控友好 + 弱网离线**看最近快照。
+
+### 依赖变更（`webui/pyproject`）
+- `edge_adviser/pyproject.toml`：新增 `fastapi`、`uvicorn[standard]`、`sse-starlette`。
+- `webui/package.json`：vue/vue-router/pinia/element-plus/echarts + vite/vue-tsc 工具链。
+
+### 已验证
+- `46 passed`（原 26 + 新增 server/bus/alerts 20 个离线确定性测试）。
+- 端到端：`create_app` 起 uvicorn 后 `/api/health` 200、SPA 在 `/` 与 `/dist` 托管、主 JS bundle 可载、`run-now` 产出 healthy 快照、SSE telemetry/alerts 推送实时数据、告警派生/持久化/确认闭环通过。
+
+---
+
 ## 0.2.0 — 2026-11-17（确定性可信度加固 + 记忆升级）
 
 针对工业可解释性对 0.1.0 的事实脊椎（AnalyticsSnapshot）做的**确定性可信度加固**。不动 nanobot 内核，全部为 edge_adviser 内新增/增强。

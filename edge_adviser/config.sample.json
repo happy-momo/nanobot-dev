@@ -15,6 +15,9 @@
   "memory_conflict_policy": "flag",
   "memory_decay_s": 7776000,
   "runlog_enabled": true,
+  "hmi_pin": "none",
+  "hmi_host": "0.0.0.0",
+  "hmi_port": 8000,
   "providers": {
     "online": {
       "model_preset": "primary",
