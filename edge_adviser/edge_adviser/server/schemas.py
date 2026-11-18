@@ -23,8 +23,8 @@ def ok(data: Any = None) -> JSONResponse:
     return envelope(True, data=data)
 
 
-def fail(error: str, status: int = 200) -> JSONResponse:
-    return envelope(False, error=error, status=status)
+def fail(error: str, status: int = 200, data: Any = None) -> JSONResponse:
+    return envelope(False, data=data, error=error, status=status)
 
 
 def metric_to_dict(m: Any) -> dict[str, Any]:

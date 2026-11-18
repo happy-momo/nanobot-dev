@@ -57,6 +57,8 @@ async def get_asset(request: Request, asset_id: str) -> Any:
     d = asset_to_dict(asset)
     d["asset_md"] = state.store.read_asset_md(asset_id)
     d["downtime_windows"] = asset.downtime_windows
+    src = next((s for s in state.config.sources if s.asset_id == asset_id), None)
+    d["source_kind"] = src.kind.value if src else None
     return ok(data=d)
 
 
@@ -76,7 +78,8 @@ async def latest_snapshot(request: Request, asset_id: str) -> Any:
 
 
 @router.get("/assets/{asset_id}/snapshots")
-async def snapshots(request: Request, asset_id: str, limit: int = 50) -> Any:
+async def snapshots(request: Request, asset_id: str, limit: int = 50,
+                    include_metrics: int = 0) -> Any:
     state: AppState = await _state(request)
     asset = state.config.asset(asset_id)
     if asset is None:
@@ -87,7 +90,7 @@ async def snapshots(request: Request, asset_id: str, limit: int = 50) -> Any:
         s = state.store.read_persisted_snapshot(asset_id, f.name)
         if s is None:
             continue
-        rows.append({
+        row = {
             "filename": f.name,
             "window_end": s.get("window_end", ""),
             "status": s.get("status", "unknown"),
@@ -96,7 +99,12 @@ async def snapshots(request: Request, asset_id: str, limit: int = 50) -> Any:
             "overall_level": s.get("overall_level", "unknown"),
             "sample_count": s.get("sample_count", 0),
             "headline": s.get("headline", ""),
-        })
+        }
+        # opt-in: Monitor needs per-metric series to draw history curves; the
+        # default payload stays lean for list views.
+        if include_metrics:
+            row["metrics"] = s.get("metrics", [])
+        rows.append(row)
     return ok(data=rows)
 
 

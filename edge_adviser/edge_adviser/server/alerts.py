@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .deps import AppState
+from ..core.bus import KIND_ALERT
 
 # An alert is warranted by one of two facts:
 #   * a REAL alarm  — overall_level is warn/critical (the engine's band verdict),

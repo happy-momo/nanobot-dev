@@ -21,7 +21,7 @@ const tone = computed(() => {
     </div>
     <div class="track"><div class="fill" :style="{ width: pct + '%', background: tone }" /></div>
     <div class="row">
-      <span class="muted">{{ samples ?? 0 }}</span>
+      <span class="muted num">{{ samples ?? 0 }}<template v-if="expected"> / {{ expected }}</template></span>
       <span class="muted">样本</span>
     </div>
   </div>

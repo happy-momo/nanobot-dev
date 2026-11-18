@@ -9,6 +9,7 @@
 
 export interface HmiColors {
   bg: string
+  bgDeep: string
   panel: string
   panelSoft: string
   border: string
@@ -18,10 +19,11 @@ export interface HmiColors {
 }
 
 export const colors: HmiColors = {
-  bg: '#0f1f2d',
-  panel: '#15293a',
-  panelSoft: '#1c3347',
-  border: '#26415a',
+  bg: '#0b1620',
+  bgDeep: '#081018',
+  panel: '#122331',
+  panelSoft: '#1a3040',
+  border: '#24405a',
   text: '#e8f0f7',
   textMuted: '#8fa6bb',
   accent: '#3f8ff7',
@@ -47,7 +49,17 @@ export const trustMeta: Record<string, { label: string; tone: string }> = {
   none: { label: '不可信', tone: '#73899c' },
 }
 
-// alert -> band / level tone (for charts & flashes)
+// level → fg/bg. The single source for level chips, alert severity and chart
+// bands (MetricChart markArea / Sparkline end-point all read from here).
+export const levelMeta: Record<string, { label: string; fg: string; bg: string }> = {
+  info: { label: '正常', fg: '#3ddc97', bg: 'rgba(61,220,151,0.16)' },
+  warn: { label: '警告', fg: '#f5b14c', bg: 'rgba(245,177,76,0.16)' },
+  critical: { label: '严重', fg: '#f4554f', bg: 'rgba(244,85,79,0.18)' },
+  insufficient: { label: '数据不足', fg: '#e8c16b', bg: 'rgba(232,193,107,0.14)' },
+  unknown: { label: '无数据', fg: '#8ea0b3', bg: 'rgba(142,160,179,0.15)' },
+}
+
+// alert -> band / level tone (kept for backward compatibility)
 export const levelTone: Record<string, string> = {
   info: colors.accent,
   warn: '#f5b14c',
@@ -62,4 +74,37 @@ export function stateOf(s?: string): string {
 
 export function metaOf(s?: string) {
   return stateMeta[stateOf(s)]
+}
+
+export function levelOf(s?: string): string {
+  return (s || 'unknown') in levelMeta ? (s as string) : 'unknown'
+}
+
+// --------------------------------------------------------------------------- //
+//  shared formatting helpers (were duplicated per-view)
+// --------------------------------------------------------------------------- //
+export function fmtNum(v: number | null | undefined, digits = 1): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—'
+  return Number(v).toFixed(digits)
+}
+
+export function formatTs(ts: string | number | undefined | null): string {
+  if (!ts) return '—'
+  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
+  if (Number.isNaN(d.getTime())) return String(ts)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+         `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+/** Relative age like "42 秒前" / "5 分钟前" / "3 小时前" / "2 天前". */
+export function relativeTime(ts: string | number | undefined | null, now = Date.now()): string {
+  if (!ts) return '—'
+  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
+  if (Number.isNaN(d.getTime())) return String(ts)
+  const diff = Math.max(0, Math.floor((now - d.getTime()) / 1000))
+  if (diff < 60) return `${diff} 秒前`
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
+  return `${Math.floor(diff / 86400)} 天前`
 }

@@ -125,6 +125,21 @@ PYTHONPATH=$PWD/edge_adviser python -m edge_adviser.cli web config.sample.json
 
 **访问控制**：`hmi_pin`（`config` 顶部）为 `"none"` 时局域网开放；设为字符串则启用共享 PIN，浏览器先 `POST /api/auth/pin` 换短期 HMAC token。
 
+### 6. 本地演示模式（无需任何模型）
+
+0.4.x 提供一条命令的**完整本地演示**：确定性 MockGateway 替代真实 LLM，启动时自动播种快照/报告/告警/审计历史，5 台模拟设备覆盖全部状态（healthy / warn / planned_downtime / stale 等）。
+
+```bash
+cd edge_adviser
+PYTHONPATH=$PWD/edge_adviser python -m edge_adviser.cli web config.demo.json
+# 或对任意配置强制演示模式：  ... web config.sample.json --demo
+```
+
+- 问答/报告/学习由 `MockGateway`（`edge_adviser/llm/mock.py`）**确定性生成**——内容是快照事实的纯函数，无需 nanobot/Ollama/API key。
+- 演示数据按日幂等播种（`workspace-demo/`），时间戳相对启动时刻重生成，新鲜度门禁必然通过；feeder1 故意保持 stale 以演示"无新鲜快照→确定性拒绝"。
+- 界面顶栏出现 **DEMO** 徽章；`/api/version` 返回 `"demo": true`。
+- 生产部署务必使用 `demo: false`（缺省）的配置。
+
 ## 目录结构
 
 ```

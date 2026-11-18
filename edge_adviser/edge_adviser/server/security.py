@@ -43,10 +43,14 @@ def verify_token(token: str, pin: str, secret: str, *, now: float | None = None)
     body, sig = token.rsplit(".", 1)
     if not body or not sig:
         return False
-    expected = _sig(body, pin, secret)
+    try:
+        exp = int(body.rstrip("."))
+    except ValueError:
+        return False
+    # token_for signs "<exp>." WITH the trailing dot — verify the exact bytes.
+    expected = _sig(f"{body.rstrip('.')}.", pin, secret)
     if not hmac.compare_digest(sig, expected):
         return False
-    exp = int(body[:-1]) if body.endswith(".") else 0
     return exp > (now if now is not None else time.time())
 
 

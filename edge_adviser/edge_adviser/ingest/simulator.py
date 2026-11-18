@@ -29,26 +29,36 @@ class SimulatorSource(DataSource):
         self.base_temp = float(p.get("base_temp", 65.0))
         self.base_vibration = float(p.get("base_vibration", 2.0))
         self.base_rpm = float(p.get("base_rpm", 1450.0))
-        self.regime = p.get("regime", "clean")  # clean | shift | spike | degrade
+        # clean | shift | spike | degrade | offline | fault
+        self.regime = p.get("regime", "clean")
         # hours of "already commissioned runtime" to advance the regime clock; lets
         # a demo window immediately exercise degrade/shift behavior.
         self.uptime_h = float(p.get("uptime_h", 0.0))
         self._t0 = datetime.now(timezone.utc) - timedelta(hours=8) - timedelta(hours=self.uptime_h)
         self._state: dict[str, float] = {}
-        self._rng = random.Random(42)
+        # per-source RNG seed so parallel demo assets don't share one noise stream
+        self._rng = random.Random(int(p.get("seed", 42)))
 
     def _ws(self, window_start: datetime, window_end: datetime) -> int:
         return int((window_end.timestamp() - window_start.timestamp()) / self.sample_freq_s)
 
     async def pull(self, window_start: datetime, window_end: datetime) -> list[Sample]:
+        # transport-level regimes short-circuit before any window math: "offline"
+        # models a connected-but-silent device; "fault" a transport failure.
+        if self.regime == "offline":
+            return []
+        if self.regime == "fault":
+            raise RuntimeError("simulated transport fault")
         n = self._ws(window_start, window_end)
         if n <= 0:
             return []
         samples: list[Sample] = []
-        frac = 0.0  # absolute time (s) since the epoch of the _state stream
-        if "t" not in self._state:
-            self._state["t"] = window_start.timestamp()
-        t = self._state["t"]
+        # Anchor EVERY pull to the requested window. Anchoring only on the first
+        # call and then advancing blindly made the internal clock drift against
+        # real time (future-dated samples when interval < window, stale snapshots
+        # when interval > window). Regime factors are pure functions of elapsed_h,
+        # so re-anchoring is safe and each snapshot covers exactly its own window.
+        t = window_start.timestamp()
         dt = self.sample_freq_s
         for _ in range(n):
             ts = datetime.fromtimestamp(t, tz=timezone.utc)
@@ -58,7 +68,6 @@ class SimulatorSource(DataSource):
             sample["ts"] = ts.isoformat(timespec="milliseconds")
             samples.append(sample)
             t += dt
-        self._state["t"] = t
         return samples
 
     # ------------------------------------------------------------------ #

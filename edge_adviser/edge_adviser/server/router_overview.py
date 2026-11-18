@@ -18,12 +18,16 @@ async def _state(request: Request) -> AppState:
 
 
 @router.get("/overview")
-async def overview(request: Request) -> Any:
+async def overview(request: Request, history: int = 0) -> Any:
     """One bird's-eye snapshot of every asset for the Dashboard card wall.
 
     Each card carries: status + trust + coverage + worst metric level + latest
     values + alert count + whether a fresh snapshot exists. This is the "①结论 →
     ②事实" top layer of the HMI.
+
+    `?history=N` embeds a sparkline series (first metric, last N snapshots) in
+    each card's runtime so the Dashboard can draw trend thumbnails in one request
+    instead of N+1 snapshot fetches.
     """
     state: AppState = await _state(request)
     cards: list[dict[str, Any]] = []
@@ -38,27 +42,52 @@ async def overview(request: Request) -> Any:
             if lv in ("critical", "warn"):
                 worst = lv if lv == "critical" or worst == "info" else worst
         alerts = _unacked_alert_count(state, a.asset_id)
+        runtime: dict[str, Any] = {
+            "ok": gate.ok,
+            "state": gate.state.value,
+            "state_reason": gate.reason or snap.get("state_reason", ""),
+            "trust": snap.get("trust", "none"),
+            "coverage": snap.get("coverage", 0.0),
+            "overall_level": snap.get("overall_level", "unknown"),
+            "worst_metric_level": worst,
+            "sample_count": snap.get("sample_count", 0),
+            "window_end": snap.get("window_end", ""),
+            "headline": snap.get("headline", ""),
+            "latest_values": latest_values,
+            "alerts": alerts,
+        }
+        if history > 0:
+            runtime["series"] = _sparkline_series(state, a.asset_id, history)
         cards.append({
             "asset_id": a.asset_id,
             "name": a.name,
             "kind": a.kind,
             "config": asset_to_dict(a),
-            "runtime": {
-                "ok": gate.ok,
-                "state": gate.state.value,
-                "state_reason": gate.reason or snap.get("state_reason", ""),
-                "trust": snap.get("trust", "none"),
-                "coverage": snap.get("coverage", 0.0),
-                "overall_level": snap.get("overall_level", "unknown"),
-                "worst_metric_level": worst,
-                "sample_count": snap.get("sample_count", 0),
-                "window_end": snap.get("window_end", ""),
-                "headline": snap.get("headline", ""),
-                "latest_values": latest_values,
-                "alerts": alerts,
-            },
+            "runtime": runtime,
         })
     return ok(data={"cards": cards, "assets_count": len(cards)})
+
+
+def _sparkline_series(state: AppState, asset_id: str, n: int) -> list[dict[str, Any]]:
+    """Trend points for the card's first metric: oldest → newest [{window_end, value, level}]."""
+    first_key = next((m.key for m in state.config.asset(asset_id).metrics if m), "")
+    out: list[dict[str, Any]] = []
+    if not first_key:
+        return out
+    for f in state.store.list_snapshots(asset_id, limit=n):
+        s = state.store.read_persisted_snapshot(asset_id, f.name)
+        if not s:
+            continue
+        m = next((mm for mm in s.get("metrics", []) if mm.get("key") == first_key), None)
+        if m is None:
+            continue
+        out.append({
+            "window_end": s.get("window_end", ""),
+            "value": m.get("mean", m.get("max")),
+            "level": m.get("level", "info"),
+        })
+    out.reverse()  # persisted filenames are newest-first; charts want oldest-first
+    return out
 
 
 def _unacked_alert_count(state: AppState, asset_id: str) -> int:
@@ -118,13 +147,27 @@ async def config_view(request: Request) -> Any:
         "memory_decay_s": c.memory_decay_s,
         "runlog_enabled": c.runlog_enabled,
         "hmi_pin_enabled": c.hmi_pin != "none",
+        "demo": c.demo,
         "providers": providers,
     })
 
 
 @router.get("/version")
 async def version(request: Request) -> Any:
-    return ok(data={"service": "edge-adviser-hmi"})
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+    try:
+        ver = _pkg_version("edge-adviser")
+    except PackageNotFoundError:
+        from .. import __version__ as ver  # fallback: repo checkout
+    state: AppState = await _state(request)
+    return ok(data={
+        "service": "edge-adviser-hmi",
+        "version": ver,
+        "demo": state.config.demo,
+        "pin_enabled": state.config.hmi_pin != "none",
+        "assets": len(state.config.assets),
+        "monitor_interval_s": state.config.monitor_interval_s,
+    })
 
 
 @router.get("/health")

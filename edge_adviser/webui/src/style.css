@@ -1,11 +1,43 @@
+/* EdgeAdviser design system — industrial dark command-center.
+   All tokens flow from here; views consume CSS vars and never hardcode hex. */
+
 :root {
-  --ea-bg: #0f1f2d;
-  --ea-panel: #15293a;
-  --ea-panel-soft: #1c3347;
-  --ea-border: #26415a;
+  /* surfaces */
+  --ea-bg: #0b1620;
+  --ea-bg-deep: #081018;
+  --ea-panel: #122331;
+  --ea-panel-soft: #1a3040;
+  --ea-panel-glass: rgba(18, 35, 49, 0.72);
+  --ea-border: #24405a;
+  --ea-border-strong: #33587c;
+  /* text */
   --ea-text: #e8f0f7;
   --ea-text-muted: #8fa6bb;
+  --ea-text-dim: #5f7891;
+  /* accent */
   --ea-accent: #3f8ff7;
+  --ea-accent-soft: rgba(63, 143, 247, 0.16);
+  --ea-grad-accent: linear-gradient(135deg, #3f8ff7 0%, #2f6fd0 100%);
+  /* elevation */
+  --ea-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --ea-shadow-md: 0 4px 14px rgba(0, 0, 0, 0.35);
+  --ea-shadow-lg: 0 10px 34px rgba(0, 0, 0, 0.45);
+  /* radius */
+  --ea-r-sm: 6px;
+  --ea-r-md: 10px;
+  --ea-r-lg: 14px;
+  --ea-r-pill: 999px;
+  /* spacing */
+  --ea-sp-1: 4px; --ea-sp-2: 8px; --ea-sp-3: 12px;
+  --ea-sp-4: 16px; --ea-sp-5: 24px; --ea-sp-6: 32px;
+  /* type scale */
+  --ea-fs-11: 11px; --ea-fs-12: 12px; --ea-fs-13: 13px; --ea-fs-14: 14px;
+  --ea-fs-16: 16px; --ea-fs-18: 18px; --ea-fs-20: 20px; --ea-fs-28: 28px;
+  --ea-fs-34: 34px;
+  /* motion */
+  --ea-t-fast: 0.12s ease;
+  --ea-t-med: 0.22s ease;
+
   font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
 }
 
@@ -14,34 +46,140 @@
 html, body, #app { height: 100%; margin: 0; }
 
 body {
-  background: var(--ea-bg);
+  background:
+    radial-gradient(1100px 480px at 78% -12%, rgba(63, 143, 247, 0.10), transparent 60%),
+    radial-gradient(900px 420px at -8% 108%, rgba(63, 143, 247, 0.06), transparent 55%),
+    var(--ea-bg);
   color: var(--ea-text);
-  font-size: 14px;
-  transition: background 0.2s ease;
+  font-size: var(--ea-fs-14);
+  transition: background var(--ea-t-med);
 }
 
-/* dark overrides for Element Plus surface colors */
-.el-card, .el-table, .el-dialog, .el-drawer, .el-message-box, .el-select-dropdown {
+/* ------------------------------------------------------------------ */
+/*  scrollbars — slim, dark                                            */
+/* ------------------------------------------------------------------ */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #223a52; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #2d4c6b; }
+
+/* ------------------------------------------------------------------ */
+/*  Element Plus coherent dark surface mapping                         */
+/* ------------------------------------------------------------------ */
+.el-card, .el-table, .el-dialog, .el-drawer, .el-message-box, .el-select-dropdown,
+.el-timeline, .el-collapse, .el-form {
   --el-bg-color: var(--ea-panel);
-  --el-bg-color-overlay: var(--ea-panel);
+  --el-bg-color-overlay: var(--ea-panel-soft);
   --el-border-color-light: var(--ea-border);
   --el-text-color-primary: var(--ea-text);
   --el-text-color-regular: var(--ea-text-muted);
 }
-.el-card { background: var(--ea-panel); border-color: var(--ea-border); color: var(--ea-text); }
-.el-table { background: transparent; --el-table-border-color: var(--ea-border); --el-table-header-bg-color: #12283a; --el-table-row-hover-bg-color: #1c3347; }
+.el-card {
+  background: var(--ea-panel);
+  border-color: var(--ea-border);
+  color: var(--ea-text);
+  border-radius: var(--ea-r-md);
+  box-shadow: var(--ea-shadow-sm);
+}
+.el-table {
+  background: transparent;
+  --el-table-border-color: var(--ea-border);
+  --el-table-header-bg-color: var(--ea-panel-soft);
+  --el-table-row-hover-bg-color: var(--ea-panel-soft);
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-text-color: var(--ea-text-muted);
+}
+.el-tag { --el-tag-border-radius: var(--ea-r-pill); }
+.el-button--primary { --el-button-bg-color: var(--ea-grad-accent); }
+.el-input__wrapper, .el-textarea__inner {
+  background-color: var(--ea-panel-soft);
+  box-shadow: 0 0 0 1px var(--ea-border) inset;
+}
+.el-input__wrapper:hover, .el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px var(--ea-border-strong) inset;
+}
+.el-input__wrapper.is-focus, .el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--ea-accent) inset;
+}
 
-.page { padding: 16px; max-width: 1500px; margin: 0 auto; }
-.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+/* ------------------------------------------------------------------ */
+/*  layout primitives                                                  */
+/* ------------------------------------------------------------------ */
+.page { padding: var(--ea-sp-4); max-width: 1500px; margin: 0 auto; }
+.toolbar {
+  display: flex; align-items: center; gap: var(--ea-sp-3);
+  flex-wrap: wrap; margin-bottom: var(--ea-sp-4);
+}
+.grid-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--ea-sp-4);
+}
 
-/* numeric values — tabular so digits don't jitter */
+/* panels */
+.panel {
+  background: var(--ea-panel);
+  border: 1px solid var(--ea-border);
+  border-radius: var(--ea-r-md);
+  box-shadow: var(--ea-shadow-sm);
+}
+.panel-glass {
+  background: var(--ea-panel-glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--ea-border);
+  border-radius: var(--ea-r-lg);
+  box-shadow: var(--ea-shadow-md);
+}
+
+/* chips */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: var(--ea-r-pill);
+  background: var(--ea-panel-soft); border: 1px solid var(--ea-border);
+  font-size: var(--ea-fs-12);
+}
+
+/* KPI block */
+.kpi-value {
+  font-variant-numeric: tabular-nums; font-feature-settings: 'tnum';
+  font-size: var(--ea-fs-28); font-weight: 700; line-height: 1.1;
+}
+
+/* ------------------------------------------------------------------ */
+/*  text utilities                                                     */
+/* ------------------------------------------------------------------ */
 .num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; font-weight: 600; }
-
-/* big readable headline metric */
-.big-value { font-variant-numeric: tabular-nums; font-size: 34px; font-weight: 700; line-height: 1; }
-
-/* muted text */
+.mono { font-family: 'Cascadia Mono', Consolas, monospace; font-size: var(--ea-fs-12); }
+.big-value { font-variant-numeric: tabular-nums; font-size: var(--ea-fs-34); font-weight: 700; line-height: 1; }
 .muted { color: var(--ea-text-muted); }
+.dim { color: var(--ea-text-dim); }
+.fs12 { font-size: var(--ea-fs-12); }
+.fs13 { font-size: var(--ea-fs-13); }
+
+/* markdown prose (MarkdownView output) */
+.md-body { line-height: 1.75; font-size: var(--ea-fs-14); word-break: break-word; }
+.md-body h1 { font-size: var(--ea-fs-20); margin: 14px 0 10px; }
+.md-body h2 { font-size: var(--ea-fs-16); margin: 16px 0 8px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--ea-border); }
+.md-body h3 { font-size: var(--ea-fs-14); margin: 12px 0 6px; }
+.md-body p { margin: 8px 0; }
+.md-body ul, .md-body ol { padding-left: 22px; margin: 8px 0; }
+.md-body table { border-collapse: collapse; margin: 10px 0; width: 100%; }
+.md-body th, .md-body td { border: 1px solid var(--ea-border); padding: 6px 10px;
+  text-align: left; font-size: var(--ea-fs-13); }
+.md-body th { background: var(--ea-panel-soft); }
+.md-body code { background: var(--ea-panel-soft); border-radius: 4px; padding: 1px 5px;
+  font-family: 'Cascadia Mono', Consolas, monospace; font-size: var(--ea-fs-12); }
+.md-body pre { background: var(--ea-panel-soft); border: 1px solid var(--ea-border);
+  border-radius: var(--ea-r-sm); padding: 10px 12px; overflow-x: auto; }
+.md-body blockquote { border-left: 3px solid var(--ea-accent); margin: 8px 0;
+  padding: 4px 12px; color: var(--ea-text-muted); }
 
 /* keep touch targets friendly for the field tablet */
 button, .el-button, .el-radio-button__inner { min-height: 30px; }
+
+/* reduced motion: the field HMI must stay calm */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

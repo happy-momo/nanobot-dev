@@ -97,14 +97,17 @@ class ReportGenerator:
 
     def archive(self, asset: AssetSpec, snapshot: dict[str, Any],
                 report_md: str, *, source: str = "", degraded: bool = False,
-                provider: str = "", generated_at: str | None = None) -> Path:
+                provider: str = "", generated_at: str | None = None,
+                day: str | None = None) -> Path:
         """Write report.md + snapshot.json into the dated report folder.
         Returns the report directory.
 
         Prepends a machine-generated DATA-SCOPE front-matter so the report's data
         provenance is deterministic and auditable, independent of the model.
+        `day` overrides the archive date (YYYY-MM-DD) — used by the demo seeder to
+        backdate reports; defaults to today.
         """
-        day = datetime.now().strftime("%Y-%m-%d")
+        day = day or datetime.now().strftime("%Y-%m-%d")
         out = self.store.reports_dir(asset.asset_id) / day
         out.mkdir(parents=True, exist_ok=True)
 

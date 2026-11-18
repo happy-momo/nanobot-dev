@@ -39,9 +39,14 @@ class AppState:
 
         ctx = ContextBuilder(config, store)
         # allow a stub gateway to be injected for offline tests; the real
-        # LLMGateway is the default production wiring.
+        # LLMGateway is the default production wiring. Demo mode swaps in a
+        # deterministic mock so QA/reports/learn work with no nanobot/LLM at all.
         if gateway is None:
-            gateway = LLMGateway(config, ctx)
+            if config.demo:
+                from ..llm.mock import MockGateway
+                gateway = MockGateway(config)
+            else:
+                gateway = LLMGateway(config, ctx)
         self.gateway = gateway
         self.report_gen = ReportGenerator(config, store, self.gateway)
         self.learner = Learner(config, store, self.gateway)

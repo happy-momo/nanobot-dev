@@ -99,7 +99,7 @@ class MetricSpec:
     min_samples: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict-like(self)
+        return asdict(self)
 
 
 # --------------------------------------------------------------------------- #
@@ -260,6 +260,11 @@ class AdviserConfig:
     # Web server bind config for the built-in `edge-adviser serve --web` mode.
     hmi_host: str = "0.0.0.0"
     hmi_port: int = 8000
+
+    # Demo mode: inject a deterministic MockGateway (no nanobot/LLM needed) and
+    # seed the workspace with rich historical data on startup. For local testing
+    # and offline presentations; production configs leave this false.
+    demo: bool = False
 
     def asset(self, asset_id: str) -> AssetSpec | None:
         return next((a for a in self.assets if a.asset_id == asset_id), None)

@@ -19,6 +19,7 @@ import asyncio
 import json
 import time
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
@@ -55,8 +56,14 @@ async def stream_alerts(request: Request) -> Any:
 @router.get("/stream/task/{token}")
 async def stream_task(request: Request, token: str) -> Any:
     state: AppState = await _state(request)
-    # filter the bus for task events whose token matches; assets filter unused
-    return await stream_bus(state.bus, [KIND_TASK], replay=True)
+    # Only deliver task events whose token matches — each action gets a unique
+    # token from _task, so a client subscribed to its own stream never sees
+    # unrelated background tasks. (Legacy tokens were the bare kind string, which
+    # still matches for old clients since start/done used the same value.)
+    def _match(ev: dict) -> bool:
+        payload = ev.get("payload") or {}
+        return payload.get("token") == token
+    return await stream_bus(state.bus, [KIND_TASK], replay=True, predicate=_match)
 
 
 # --------------------------------------------------------------------------- #
@@ -75,13 +82,14 @@ async def run_now(request: Request, asset_id: str) -> Any:
     asset = state.config.asset(asset_id)
     if asset is None:
         return fail("unknown asset")
-    async with _task(state, asset_id, "run-now"):
+    async with _task(state, asset_id, "run-now") as task:
         snap = await state.supervisor.run_once(asset)
         if isinstance(snap, dict) and snap.get("error"):
-            return fail(f"run not OK: {snap.get('error')}")
+            return fail(f"run not OK: {snap.get('error')}", data={"token": task.token})
         from .alerts import publish_alert
         await _publish_snapshot(state, asset_id, snap)
         await publish_alert(state, asset_id, snap)
+        snap["token"] = task.token
         return ok(data=snap)
 
 
@@ -91,10 +99,11 @@ async def report(request: Request, asset_id: str) -> Any:
     asset = state.config.asset(asset_id)
     if asset is None:
         return fail("unknown asset")
-    async with _task(state, asset_id, "report"):
+    async with _task(state, asset_id, "report") as task:
         res = await state.supervisor.run_deep_report(asset)
         if isinstance(res, dict) and res.get("error"):
-            return fail(f"report gated: {res.get('error')}")
+            return fail(f"report gated: {res.get('error')}", data={"token": task.token})
+        res["token"] = task.token
         return ok(data=res)
 
 
@@ -104,11 +113,11 @@ async def learn(request: Request, asset_id: str) -> Any:
     asset = state.config.asset(asset_id)
     if asset is None:
         return fail("unknown asset")
-    async with _task(state, asset_id, "learn"):
+    async with _task(state, asset_id, "learn") as task:
         res = await state.supervisor.run_learn(asset)
         if res.error:
-            return fail(f"learn gated: {res.error}")
-        return ok(data={"content": res.content[:400]})
+            return fail(f"learn gated: {res.error}", data={"token": task.token})
+        return ok(data={"content": res.content[:400], "token": task.token})
 
 
 class AskIn(BaseModel):
@@ -150,13 +159,16 @@ class _task:
         self.state = state
         self.asset_id = asset_id
         self.kind = kind
+        self.token = uuid4().hex  # unique per action so /stream/task/{token} can isolate it
 
     async def __aenter__(self):
         await self.state.bus.publish(KIND_TASK, self.asset_id,
-                                     payload={"token": self.kind, "phase": "start"})
+                                     payload={"token": self.token, "kind": self.kind,
+                                              "phase": "start"})
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
         phase = "failed" if exc else "done"
         await self.state.bus.publish(KIND_TASK, self.asset_id,
-                                     payload={"token": self.kind, "phase": phase})
+                                     payload={"token": self.token, "kind": self.kind,
+                                              "phase": phase})

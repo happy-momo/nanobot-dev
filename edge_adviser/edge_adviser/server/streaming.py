@@ -45,17 +45,25 @@ async def stream_bus(
     *,
     assets: Iterable[str] | None = None,
     replay: bool = True,
+    predicate: Any | None = None,
 ) -> EventSourceResponse:
     """Return an SSE stream of live bus events for the given kinds (and assets).
 
     `kinds` empty → all kinds. `assets` empty/None → all assets.
+    `predicate(ev)` — optional extra filter applied to both replay and live
+    delivery (e.g. a task-token match for /stream/task/{token}).
     """
     kset: set[str] = set(kinds)
     assetset: set[str] = set(assets or [])
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
     async def relay(ev: dict[str, Any]) -> None:
+        if predicate is not None and not predicate(ev):
+            return
         await queue.put(ev)
+
+    def _pass(ev: dict[str, Any]) -> bool:
+        return predicate is None or bool(predicate(ev))
 
     async def _generator():
         sub_task: asyncio.Task[None] | None = None
@@ -67,7 +75,8 @@ async def stream_bus(
             )
             if replay:
                 for ev in _replay_payloads(bus, kset, assetset if assetset else None)[:20]:
-                    yield _to_sse(ev)
+                    if _pass(ev):
+                        yield _to_sse(ev)
             while True:
                 try:
                     ev = await asyncio.wait_for(queue.get(), timeout=25.0)

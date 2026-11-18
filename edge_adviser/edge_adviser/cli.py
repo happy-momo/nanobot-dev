@@ -185,7 +185,8 @@ async def _cmd_serve(c: _Context) -> None:
         await sup.stop()
 
 
-async def _cmd_web(c: _Context, host: str | None, port: int | None) -> int:
+async def _cmd_web(c: _Context, host: str | None, port: int | None,
+                   demo: bool = False) -> int:
     """Serve the B/S human-machine interface (FastAPI + built SPA).
 
     Rebuild the frontend first: `cd edge_adviser/webui && npm install && npm run build`.
@@ -194,7 +195,8 @@ async def _cmd_web(c: _Context, host: str | None, port: int | None) -> int:
     import uvicorn
     from .server.app import create_app, _DIST
 
-    app = create_app(c.config.defaults.get("_source_file", "config.json"))
+    app = create_app(c.config.defaults.get("_source_file", "config.json"),
+                     demo=demo or None)
     bind_host = host or getattr(c.config, "hmi_host", "0.0.0.0")
     bind_port = port or getattr(c.config, "hmi_port", 8000)
     if not _DIST.exists():
@@ -233,6 +235,8 @@ def main(argv: list[str] | None = None) -> int:
     pw = add("web", "serve the B/S human-machine interface (FastAPI)")
     pw.add_argument("--host", default=None)
     pw.add_argument("--port", type=int, default=None)
+    pw.add_argument("--demo", action="store_true",
+                    help="force demo mode (MockGateway + seeded workspace)")
 
     args = parser.parse_args(argv)
     c = _build(args.config)
@@ -255,7 +259,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "serve":
             await _cmd_serve(c)
         elif args.cmd == "web":
-            return await _cmd_web(c, host=args.host, port=args.port)
+            return await _cmd_web(c, host=args.host, port=args.port,
+                                  demo=getattr(args, "demo", False))
         return 0
 
     try:

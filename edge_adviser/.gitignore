@@ -1,5 +1,6 @@
 # Runtime data — regenerable from sources
 workspace/
+workspace-demo/
 sessions/
 __pycache__/
 *.pyc

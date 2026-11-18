@@ -4,6 +4,67 @@
 
 ---
 
+## 0.4.0 — 2026-11-19（HMI 重构升级 + 后端 Demo 模式）
+
+在 0.3.0 的 HMI 基础上做 **UI 全面重设计 + 后端确定性 Demo 模式 + 一批真实 bug 修复**。一条命令即可启动完整的本地演示系统，无需任何 LLM/模型基础设施。
+
+### 后端 Bug 修复（0.3.0 引入或遗留）
+
+| # | 文件 | 问题 | 修复 |
+|---|---|---|---|
+| 1 | `server/alerts.py` | `KIND_ALERT` 未导入 → NameError 被吞 → **告警 SSE 从未广播** | 补导入；SSE 告警实测送达 |
+| 2 | `server/app.py` | `check_auth` 定义了但从未注册 → **PIN 模式完全不生效** | 注册为 HTTP 中间件；`?token=` query 兜底（EventSource 无法带头） |
+| 3 | `server/security.py` | `token_for` 签 `"<exp>.<sig>"` 但 `verify_token` 校验剥离点号后的 body → **签名永不匹配，token 一发即失效** | 统一为校验 `"<exp>."` 的精确字节 |
+| 4 | `server/app.py` | `PinIn` 类定义在 `create_app` 内部，`from __future__ import annotations` 下 FastAPI 无法解析 → PIN 交换恒 422 | 移到模块级 |
+| 5 | `server/app.py` | `/dist/monitor/pump1` 等深链接刷新 404 | 404 handler 把无扩展名的 `/dist/*` 重写到 SPA shell |
+| 6 | `ingest/simulator.py` | 内部时钟只在首次 pull 锚定 → 时钟漂移（未来时间戳/陈旧快照） | 每次 pull 以请求窗口锚定 |
+| 7 | `server/router_actions.py` | `/stream/task/{token}` 不过滤 token；动作无唯一 token | uuid token + `predicate` 过滤；响应返回 token |
+| 8 | `server/router_assets.py` | 快照摘要行无 metrics → Monitor 无法画历史曲线 | `?include_metrics=1` 参数 |
+| 9 | `config/model.py` | `MetricSpec.to_dict` 笔误 `asdict-like(self)` | `asdict(self)` |
+
+### 后端 Demo 模式（本地测试，零模型依赖）
+
+| 模块 | 内容 |
+|---|---|
+| `config.demo.json`（新） | 5 台设备覆盖全部状态：motor1=healthy / pump1=warn / chiller1=warn（spike）/ tower1=planned_downtime / feeder1=stale |
+| `llm/mock.py`（新） | `MockGateway`：确定性、无 LLM 的 gateway —— 报告/QA/学习内容为快照事实的纯函数；含人工延迟让 UI 加载态可见 |
+| `server/demo.py`（新） | `seed_demo_workspace`：启动时播种 24 份快照/资产、4 天归档报告、3 条告警（1 条已确认）、runlog/反馈/MEMORY.md/claims+conflicts；按日幂等 |
+| `ingest/simulator.py` | 新 regime `offline`（返回空）/`fault`（抛传输异常）；新 `seed` 参数 |
+| `config/model.py` + loader | `demo: bool` 字段 |
+| `cli.py` | `web --demo` 强制演示模式 |
+| `/api/version` + `/api/config` | 返回 `demo`/`version`/`pin_enabled`/`assets`，UI 显示 DEMO 徽章 |
+
+### API 增强（向后兼容）
+
+- `GET /api/overview?history=8` — 每卡附带首指标 sparkline 系列（一次请求免 N+1）
+- `GET /api/assets/{id}/snapshots?include_metrics=1` — 行内嵌 metrics 数组
+- `GET /api/assets/{id}` — 附 `source_kind`
+- `POST /api/assets/{id}/run-now|report|learn` — 响应含 `token`（订阅 `/stream/task/{token}`）
+
+### 前端重设计（10 页全部重做）
+
+- **设计系统**：`style.css` 全面 token 化（渐变/玻璃拟态面板/阴影/圆角/间距/字阶/统一滚动条）；`theme/echarts.ts` 注册 `ea-dark` 图表主题；`levelMeta` 作为级别色单一来源；`relativeTime/fmtNum/formatTs` 收纳重复工具
+- **App 壳**：可折叠侧栏（图标导航 + localStorage 记忆）、<900px 抽屉、顶栏 DEMO 徽章 + **SSE 连接状态指示**（实时连接/重连中）、新告警 ElNotification 弹出
+- **Dashboard**：KPI 条（设备数/正常/警告/严重/数据劣化/未确认告警/平均覆盖）+ 卡片墙每卡 sparkline + 带单位指标值 + 级别 chip + 相对时间
+- **Monitor**：修复未定义 `metricKeys`（历史无数据时图表根本不渲染的 bug）；`include_metrics=1` 拉历史曲线；阈值 markArea 色带；新鲜度进度条；「立即采集」按钮
+- **Alerts**：设备/级别过滤 + 计数 chip + 逐行确认 loading + 已确认历史（含 acked_at）
+- **Reports**：左侧归档时间线 + MarkdownView（marked+DOMPurify 替换损坏的手写渲染器）+ 认证下载（window.open 丢 token 修复）+ 生成 busy 态
+- **Qa**：每资产独立线程、真实 trust 徽章、门禁拒绝/网络错误分类卡片、建议问题、Shift+Enter 换行、markdown 答案
+- **Knowledge**：章节导航 + claims/conflicts 状态卡 + 空态「运行学习」CTA
+- **Feedback**：快捷类别 chips + 内容校验 + 时间格式化
+- **Assets**：左列表右详情 + MetricBand 阈值色带现值标记 + source_kind + ASSET.md 展示
+- **Runlog**：缺口日检测（无审计记录的日历日高亮）+ 结果过滤 + 成功率
+- **Settings**:服务状态卡（版本/DEMO/健康检查）+ provider 空态提示 + 错误重试态
+- **构建**：新增 `npm run typecheck`（vue-tsc 0 错误）；新增依赖 marked/dompurify/@element-plus/icons-vue（全部本地打包，离线约束不破）
+
+### 已验证
+
+- `62 passed`（46 原有 + 10 修复测试 + 6 demo 测试）离线全绿。
+- `python -m edge_adviser.cli web config.demo.json` 一条命令完整演示；10 项 curl 清单全过（版本/五资产状态/sparkline/metrics/4 天报告/DATA-SCOPE/mock 问答/门禁拒绝/深链接/根路径）；SSE 告警在首个调度 tick 实测推送。
+- `npm run typecheck` + `npm run build` 全绿。
+
+---
+
 ## 0.3.0 — 2026-11-18（现场人机交互界面 HMI）
 
 在 CLI 之上叠加一套 **B/S 现场人机界面**，让运维/巡检/工程师无需敲命令即可掌握设备状态并追溯审计。**不改动 nanobot 内核**，全部新增在 `edge_adviser/` 内。

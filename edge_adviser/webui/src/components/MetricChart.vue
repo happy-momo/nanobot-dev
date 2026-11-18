@@ -1,62 +1,90 @@
 <script setup lang="ts">
-// ECharts metric chart: value curve(s) over a history of snapshots, with the
-// normal / warn / critical bands drawn behind the line — the chart's colors come
-// from the same theme table as the badges, so "band = alarm zone" is one language.
-import { onMounted, onBeforeUnmount, ref, watch, computed } from 'vue'
+// ECharts metric chart: value curve over the snapshot history with the
+// normal/warn/critical bands drawn as colored markArea zones behind the line —
+// the chart's colors come from the same theme table as the badges, so
+// "band = alarm zone" is one visual language. Threshold changes alone (spec)
+// also trigger a redraw; a ResizeObserver handles container-only resizes such
+// as the collapsible sidebar.
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
-import { LineChart, BarChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent, MarkLineComponent, DataZoomComponent } from 'echarts/components'
+import { LineChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent, MarkAreaComponent, MarkLineComponent, DataZoomComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsType } from 'echarts/core'
 
-echarts.use([LineChart, BarChart, GridComponent, TooltipComponent, MarkLineComponent, DataZoomComponent, CanvasRenderer])
+echarts.use([LineChart, GridComponent, TooltipComponent, MarkAreaComponent, MarkLineComponent, DataZoomComponent, CanvasRenderer])
+
+export interface ChartSpec {
+  norm_min?: number | null
+  norm_max?: number | null
+  warn_min?: number | null
+  warn_max?: number | null
+  crit_min?: number | null
+  crit_max?: number | null
+}
 
 const props = defineProps<{
   metricKey: string
   metricLabel: string
   unit: string
   series: { window_end: string; value: number | null; level?: string }[]
-  spec?: { norm_min?: number | null; norm_max?: number | null; warn_min?: number | null; warn_max?: number | null; crit_min?: number | null; crit_max?: number | null } | null
+  spec?: ChartSpec | null
 }>()
 
 const el = ref<HTMLDivElement>()
 let chart: EChartsType | null = null
+let ro: ResizeObserver | null = null
+
+const TONE = {
+  norm: 'rgba(61,220,151,0.10)',
+  warn: 'rgba(245,177,76,0.12)',
+  crit: 'rgba(244,85,79,0.14)',
+}
 
 function buildOption() {
-  const s = props.spec
+  const s = props.spec || {}
   const cats = props.series.map((p) => (p.window_end ? p.window_end.slice(5, 16) : ''))
   const values = props.series.map((p) => p.value)
-  // band lines for warn/critical (dashed thresholds) if provided
-  const markLines: any[] = []
-  const axis = [{ type: 'category', data: cats, axisLabel: { color: '#8fa6bb' }, name: '窗口' }]
-  if (s) {
-    for (const [v, name, color] of [
-      [s.norm_min, 'norm<=', '#3ddc97'],
-      [s.norm_max, 'norm', '#3ddc97'],
-      [s.warn_min, 'warn', '#f5b14c'],
-      [s.warn_max, 'warn', '#f5b14c'],
-      [s.crit_min, 'crit', '#f4554f'],
-      [s.crit_max, 'crit', '#f4554f'],
-    ] as const) {
-      if (v != null) markLines.push({ yAxis: v, name, lineStyle: { color, type: 'dashed', width: 1 } })
-    }
-    markLines.push({
-      yAxis: (s.crit_max ?? s.norm_max ?? 50),
-      label: { show: true, position: 'end', color: '#f4554f', formatter: () => '' },
+
+  // markArea bands: contiguous zones between sorted thresholds
+  const areas: Array<{ yAxis: number[]; itemStyle: { color: string } }> = []
+  const edges = [s.crit_min, s.warn_min, s.norm_min, s.norm_max, s.warn_max, s.crit_max]
+    .filter((v) => v != null) as number[]
+  const uniq = [...new Set(edges)].sort((a, b) => a - b)
+  const bandTone = (mid: number) => {
+    if (s.crit_min != null && mid < s.crit_min) return TONE.crit
+    if (s.crit_max != null && mid > s.crit_max) return TONE.crit
+    if ((s.warn_min != null && mid < s.warn_min) || (s.warn_max != null && mid > s.warn_max))
+      return TONE.warn
+    return TONE.norm
+  }
+  for (let i = 0; i < uniq.length - 1; i++) {
+    areas.push({
+      yAxis: [uniq[i], uniq[i + 1]],
+      itemStyle: { color: bandTone((uniq[i] + uniq[i + 1]) / 2) },
     })
   }
+  // extend the outermost zones to the axis edges
+  if (uniq.length >= 2) {
+    if (s.crit_min != null) areas.push({ yAxis: [uniq[0] - (uniq[1] - uniq[0]) * 4, uniq[0]], itemStyle: { color: TONE.crit } })
+    if (s.crit_max != null) areas.push({ yAxis: [uniq[uniq.length - 1], uniq[uniq.length - 1] + (uniq[uniq.length - 1] - uniq[uniq.length - 2]) * 4], itemStyle: { color: TONE.crit } })
+  }
+
+  const markLines: any[] = []
+  for (const [v, color] of [
+    [s.warn_min, '#f5b14c'], [s.warn_max, '#f5b14c'],
+    [s.crit_min, '#f4554f'], [s.crit_max, '#f4554f'],
+  ] as const) {
+    if (v != null) markLines.push({ yAxis: v, lineStyle: { color, type: 'dashed', width: 1 }, label: { show: false } })
+  }
+
   return {
     backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: '#15293a',
-      borderColor: '#26415a',
-      textStyle: { color: '#e8f0f7' },
-    },
-    grid: { left: 50, right: 20, top: 30, bottom: 40 },
-    xAxis: axis,
-    yAxis: { type: 'value', name: props.unit || '', nameTextStyle: { color: '#8fa6bb' }, axisLabel: { color: '#8fa6bb' }, splitLine: { lineStyle: { color: '#1c3347' } } },
-    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 6, borderColor: '#26415a', backgroundColor: '#12283a', dataBackground: { lineStyle: { color: '#26415a' }, areaStyle: { color: '#1c3347' } } }],
+    tooltip: { trigger: 'axis' },
+    grid: { left: 8, right: 16, top: 26, bottom: 36, containLabel: true },
+    xAxis: { type: 'category', data: cats },
+    yAxis: { type: 'value', name: props.unit || '' },
+    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 4 }],
     series: [
       {
         name: props.metricLabel || props.metricKey,
@@ -68,7 +96,8 @@ function buildOption() {
         lineStyle: { color: '#3f8ff7', width: 2 },
         itemStyle: { color: '#3f8ff7' },
         areaStyle: { color: 'rgba(63,143,247,0.08)' },
-        markLine: { data: markLines, symbol: 'none' },
+        markArea: { silent: true, data: areas },
+        markLine: { silent: true, symbol: 'none', data: markLines },
       },
     ],
   }
@@ -76,24 +105,22 @@ function buildOption() {
 
 function render() {
   if (!el.value) return
-  if (!chart) chart = echarts.init(el.value)
+  if (!chart) chart = echarts.init(el.value, 'ea-dark')
   chart.setOption(buildOption(), true)
-}
-
-function onResize() {
-  chart?.resize()
 }
 
 onMounted(() => {
   render()
-  window.addEventListener('resize', onResize)
+  ro = new ResizeObserver(() => chart?.resize())
+  if (el.value) ro.observe(el.value)
 })
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', onResize)
+  ro?.disconnect()
   chart?.dispose()
   chart = null
 })
-watch(() => JSON.stringify(props.series), () => render(), { deep: false })
+watch(() => JSON.stringify(props.series), render)
+watch(() => JSON.stringify(props.spec), render)
 </script>
 
 <template>

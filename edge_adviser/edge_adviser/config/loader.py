@@ -110,6 +110,7 @@ def load_config(path: str | Path) -> AdviserConfig:
         hmi_pin=raw.get("hmi_pin", "none"),
         hmi_host=raw.get("hmi_host", "0.0.0.0"),
         hmi_port=raw.get("hmi_port", 8000),
+        demo=raw.get("demo", False),
     )
 
 

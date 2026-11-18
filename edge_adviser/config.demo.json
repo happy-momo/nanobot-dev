@@ -1,0 +1,159 @@
+{
+  "workspace": "workspace-demo",
+  "demo": true,
+  "monitor_interval_s": 30,
+  "data_freshness_s": 1800,
+  "coverage_threshold": 0.8,
+  "max_empty_windows": 3,
+  "learn_gate": "soft",
+  "memory_index": "off",
+  "memory_conflict_policy": "flag",
+  "runlog_enabled": true,
+  "hmi_pin": "none",
+  "hmi_host": "0.0.0.0",
+  "hmi_port": 8000,
+  "providers": {},
+  "assets": [
+    {
+      "asset_id": "motor1",
+      "name": "M1 主传动电机",
+      "kind": "motor",
+      "description": "1# 生产线主传动电机,55kW 四极异步电机。",
+      "sample_freq_s": 1.0,
+      "window_s": 60,
+      "scenario_notes": [
+        "电机温升与室温相关,夏季需复核阈值。",
+        "常规保养周期 6 个月。"
+      ],
+      "metrics": [
+        { "key": "temp", "unit": "degC", "norm_max": 70,
+          "warn_max": 72, "crit_max": 80, "persist": 5, "min_samples": 30,
+          "description": "绕组温度" },
+        { "key": "vibration", "unit": "mm/s", "norm_max": 3.5,
+          "warn_max": 4.5, "crit_max": 6.0, "persist": 5,
+          "description": "轴承振动速度 (ISO 10816-3)" },
+        { "key": "rpm", "unit": "rpm", "norm_min": 1400, "norm_max": 1550,
+          "warn_min": 1380, "warn_max": 1580,
+          "crit_min": 1350, "crit_max": 1620, "persist": 5,
+          "description": "转速" }
+      ]
+    },
+    {
+      "asset_id": "pump1",
+      "name": "AB 水泥喂料泵",
+      "kind": "pump",
+      "description": "生料浆线高压喂料泵,历史振动高企,疑似轴承磨损初期。",
+      "sample_freq_s": 1.0,
+      "window_s": 60,
+      "scenario_notes": [
+        "P-201 泵以 30 m3/h 名义流量向生料磨供浆。",
+        "振动超过 4.5 mm/s 历史上先于轴承更换出现。",
+        "转速低于 1200 提示上游断流或气蚀。"
+      ],
+      "metrics": [
+        { "key": "temp", "unit": "degC", "norm_max": 68,
+          "warn_max": 68, "crit_max": 73, "persist": 5, "min_samples": 30,
+          "description": "轴承座温度" },
+        { "key": "vibration", "unit": "mm/s", "norm_max": 3.0,
+          "warn_max": 3.0, "crit_max": 4.5, "persist": 5,
+          "description": "轴承振动速度 (ISO 10816-3)" },
+        { "key": "rpm", "unit": "rpm", "norm_min": 1200, "norm_max": 1600,
+          "warn_min": 1250, "warn_max": 1620,
+          "crit_min": 1200, "crit_max": 1700, "persist": 5,
+          "description": "轴转速(低于 1200 为断流)" }
+      ]
+    },
+    {
+      "asset_id": "chiller1",
+      "name": "C-1 冷水机组",
+      "kind": "chiller",
+      "description": "中央冷却水系统螺杆式冷水机组,启停冲击产生温度尖峰。",
+      "sample_freq_s": 1.0,
+      "window_s": 60,
+      "scenario_notes": [
+        "启停时温度瞬时尖峰为已知瞬态,非故障。",
+        "冷却水进口温度受冷却塔效率影响。"
+      ],
+      "metrics": [
+        { "key": "temp", "unit": "degC", "norm_max": 62,
+          "warn_max": 63, "crit_max": 66, "persist": 3, "min_samples": 30,
+          "description": "压缩机排气温度" },
+        { "key": "vibration", "unit": "mm/s", "norm_max": 2.8,
+          "warn_max": 3.5, "crit_max": 5.0, "persist": 3,
+          "description": "压缩机振动速度" },
+        { "key": "rpm", "unit": "rpm", "norm_min": 1300, "norm_max": 1600,
+          "warn_min": 1280, "warn_max": 1650,
+          "crit_min": 1250, "crit_max": 1700, "persist": 3,
+          "description": "螺杆转速" }
+      ]
+    },
+    {
+      "asset_id": "tower1",
+      "name": "CT-1 冷却塔",
+      "kind": "cooling_tower",
+      "description": "循环水冷却塔,当前处于年度检修计划停机窗口(演示 planned_downtime)。",
+      "sample_freq_s": 1.0,
+      "window_s": 60,
+      "downtime_windows": [
+        { "start": "2026-01-01T00:00:00Z", "end": "2026-01-01T01:00:00Z" }
+      ],
+      "scenario_notes": [
+        "每年例行检修约 8 小时,期间停机不采集数据。",
+        "风机振动需在满水状态评估。"
+      ],
+      "metrics": [
+        { "key": "temp", "unit": "degC", "norm_min": 18, "norm_max": 35,
+          "warn_max": 40, "crit_max": 45, "persist": 5, "min_samples": 30,
+          "description": "出水温度" },
+        { "key": "vibration", "unit": "mm/s", "norm_max": 4.0,
+          "warn_max": 5.6, "crit_max": 7.1, "persist": 5,
+          "description": "风机振动速度" },
+        { "key": "rpm", "unit": "rpm", "norm_min": 200, "norm_max": 320,
+          "warn_min": 190, "warn_max": 330,
+          "crit_min": 180, "crit_max": 350, "persist": 5,
+          "description": "风机转速" }
+      ]
+    },
+    {
+      "asset_id": "feeder1",
+      "name": "F-2 给料机",
+      "kind": "feeder",
+      "description": "配料站振动给料机,数据采集链路故障演示(演示 stale + 门禁拒绝)。",
+      "sample_freq_s": 1.0,
+      "window_s": 60,
+      "scenario_notes": [
+        "给料量与振幅强相关,断料时振幅骤降。",
+        "采集网关经工业交换机接入,历史上偶发链路抖动。"
+      ],
+      "metrics": [
+        { "key": "temp", "unit": "degC", "norm_max": 60,
+          "warn_max": 65, "crit_max": 72, "persist": 5, "min_samples": 30,
+          "description": "激振器温度" },
+        { "key": "vibration", "unit": "mm/s", "norm_max": 5.0,
+          "warn_max": 6.0, "crit_max": 8.0, "persist": 5,
+          "description": "槽体振动幅度" },
+        { "key": "rpm", "unit": "rpm", "norm_min": 900, "norm_max": 1200,
+          "warn_min": 880, "warn_max": 1250,
+          "crit_min": 850, "crit_max": 1300, "persist": 5,
+          "description": "激振器转速" }
+      ]
+    }
+  ],
+  "sources": [
+    { "kind": "simulator", "asset_id": "motor1",
+      "params": { "sample_freq_s": 1.0, "regime": "clean", "seed": 11,
+                  "base_temp": 55.0, "base_vibration": 1.8, "base_rpm": 1480.0 } },
+    { "kind": "simulator", "asset_id": "pump1",
+      "params": { "sample_freq_s": 1.0, "regime": "degrade", "seed": 23,
+                  "uptime_h": 200, "base_temp": 62.0 } },
+    { "kind": "simulator", "asset_id": "chiller1",
+      "params": { "sample_freq_s": 1.0, "regime": "spike", "seed": 37,
+                  "uptime_h": 24, "base_temp": 60.0, "base_vibration": 1.5 } },
+    { "kind": "simulator", "asset_id": "tower1",
+      "params": { "sample_freq_s": 1.0, "regime": "offline", "seed": 53,
+                  "base_temp": 28.0, "base_vibration": 2.5, "base_rpm": 290.0 } },
+    { "kind": "simulator", "asset_id": "feeder1",
+      "params": { "sample_freq_s": 1.0, "regime": "fault", "seed": 71,
+                  "base_temp": 48.0, "base_vibration": 3.5, "base_rpm": 980.0 } }
+  ]
+}

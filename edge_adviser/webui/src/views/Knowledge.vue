@@ -1,97 +1,175 @@
 <script setup lang="ts">
-// Knowledge base: render the asset's MEMORY.md (chapters) plus the claims/conflicts
-// ledger. Conflict/stale claims are shown with a distinct tag so a trend, a
-// superseded threshold or an expired fact is never silently trusted.
+// Knowledge base: MEMORY.md rendered as safe markdown with chapter navigation,
+// plus the claims/conflicts ledger. Conflict/stale claims get a distinct tag so
+// a superseded threshold or an expired fact is never silently trusted. Empty
+// state offers a "run learning" CTA.
 import { ref, watch, onMounted, computed } from 'vue'
+import { ElMessage } from 'element-plus'
 import { api } from '../api/http'
 import { useRuntime } from '../stores/runtime'
+import MarkdownView from '../components/MarkdownView.vue'
+import PageHeader from '../components/PageHeader.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 const rt = useRuntime()
 const assetId = ref('')
 const data = ref<any>(null)
+const loading = ref(false)
+const learning = ref(false)
+const activeChapter = ref(0)
 
 async function load() {
   if (!assetId.value) return
-  data.value = await api.get<any>(`/api/assets/${assetId.value}/knowledge`)
+  loading.value = true
+  try {
+    data.value = await api.get<any>(`/api/assets/${assetId.value}/knowledge`)
+    activeChapter.value = 0
+  } catch (e: any) {
+    ElMessage.error(e?.message || '知识库加载失败')
+  } finally {
+    loading.value = false
+  }
 }
 
-const claims = computed(() => data.value?.claims || [])
-const conflicts = computed(() => data.value?.conflicts || [])
-const sampleIndices = computed(() => {
-  const md = data.value?.memory_md || ''
-  const secs = md.split(/^## /m).slice(1)
-  return secs.length
+async function runLearn() {
+  if (!assetId.value || learning.value) return
+  learning.value = true
+  try {
+    const r = await rt.triggerLearn(assetId.value)
+    if (r?.error) ElMessage.warning('学习被门禁拒绝：' + r.error)
+    else {
+      ElMessage.success('学习完成，知识已更新')
+      await load()
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '学习失败')
+  } finally {
+    learning.value = false
+  }
+}
+
+// chapter split on `^## ` headings for the nav rail
+const chapters = computed(() => {
+  const md: string = data.value?.memory_md || ''
+  if (!md.trim()) return []
+  const parts = md.split(/^## /m).filter((p) => p.trim())
+  const out: Array<{ title: string; body: string }> = []
+  for (const p of parts) {
+    const nl = p.indexOf('\n')
+    const title = (nl >= 0 ? p.slice(0, nl) : p).trim().replace(/^#\s*/, '') || '(untitled)'
+    const body = (nl >= 0 ? p.slice(nl + 1) : '').trim()
+    // keep the original heading markdown so MarkdownView renders it
+    out.push({ title, body: '## ' + title + '\n\n' + body })
+  }
+  return out
 })
 
-function renderChapters() {
-  const md = data.value?.memory_md || ''
-  // naive: replace ## headings with styled blocks + anchors
-  return md
-    .replace(/^### /gm, '<h4>')
-    .replace(/^## /gm, '<h3>')
-    .replace(/^# /gm, '<h2>')
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/\n/g, '<br/>')
-}
+const claimStatus = computed(() => (s?: string) => {
+  const map: Record<string, { label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
+    active: { label: '生效中', type: 'success' },
+    stale: { label: '已过时', type: 'warning' },
+    superseded: { label: '已被取代', type: 'danger' },
+  }
+  return map[s || ''] || { label: s || '未知', type: 'info' as const }
+})
 
 onMounted(async () => {
   if (!assetId.value && rt.overviewCards.length) assetId.value = rt.overviewCards[0].asset_id
   await load()
 })
-watch(() => assetId.value, load)
+watch(assetId, () => load())
 </script>
 
 <template>
   <div class="page">
-    <div class="toolbar">
+    <PageHeader title="知识库" subtitle="设备记忆（MEMORY.md）+ 知识声明账本">
       <el-select v-model="assetId" style="width:200px">
         <el-option v-for="a in rt.overviewCards" :key="a.asset_id" :value="a.asset_id" :label="a.name" />
       </el-select>
-      <div class="muted" style="font-size:12px">learn_gate：{{ data?.learn_gate || '—' }} · {{ sampleIndices }} 个章节</div>
-    </div>
+      <el-button size="small" @click="load">刷新</el-button>
+    </PageHeader>
 
-    <div v-if="!data" class="muted" style="padding:40px;text-align:center">加载中…</div>
+    <div v-if="loading" style="padding:40px;text-align:center" class="muted">加载中…</div>
 
-    <div v-else class="grid">
-      <el-card shadow="never" class="md-card">
-        <template #header><b>MEMORY.md · 沉淀知识</b></template>
-        <div class="md" v-html="renderChapters()" />
-      </el-card>
+    <EmptyState v-else-if="!data?.memory_md?.trim()"
+                icon="📚" text="该设备还没有学习知识"
+                hint="运行学习后，模型会从历史快照中沉淀运行洞察、阈值校准与维护动作">
+      <el-button size="small" type="primary" :loading="learning" @click="runLearn">
+        运行学习
+      </el-button>
+    </EmptyState>
 
-      <div class="side">
-        <el-card v-if="conflicts.length" shadow="never" class="section">
-          <template #header><b>冲突 / 演变记账</b></template>
-          <div v-for="(c, i) in conflicts" :key="i" class="conflict">
-            <el-tag type="warning" size="small">冲突/作废</el-tag>
-            <div class="muted small">{{ c.heading }}</div>
-            <div class="muted small">{{ c.old_val }} → {{ c.new_val }}</div>
-            <div class="muted small">@{{ c.created_at }}</div>
-          </div>
+    <div v-else class="layout">
+      <!-- chapter rail -->
+      <aside class="chapters">
+        <div v-for="(ch, i) in chapters" :key="i" class="ch-item"
+             :class="{ active: activeChapter === i }" @click="activeChapter = i">
+          {{ ch.title }}
+        </div>
+      </aside>
+
+      <section class="mem">
+        <el-card shadow="never" v-loading="false">
+          <MarkdownView :source="chapters[activeChapter]?.body || data.memory_md" />
         </el-card>
-        <el-card v-if="claims.length" shadow="never" class="section">
-          <template #header><b>知识声明 {{ claims.length }}</b></template>
-          <div v-for="(c, i) in claims" :key="i" class="claim">
-            <el-tag
-              :type="c.status === 'superseded' ? 'danger' : c.status === 'stale' ? 'warning' : 'success'"
-              size="small"
-            >{{ c.status || 'active' }}</el-tag>
-            <span class="muted small">{{ c.heading }}</span>
-            <div class="muted small">{{ (c.raw || '').slice(0, 120) }}</div>
+      </section>
+
+      <aside class="ledger">
+        <div class="ledger-card" v-if="data.conflicts?.length">
+          <div class="lc-title">⚠ 冲突 / 过期标记</div>
+          <div v-for="c in data.conflicts" :key="c.id || c.ts" class="lc-row">
+            <el-tag type="danger" size="small">冲突</el-tag>
+            <span class="small">{{ c.reason || c.claim_id }}</span>
           </div>
-        </el-card>
-      </div>
+        </div>
+        <div class="ledger-card">
+          <div class="lc-title">知识声明</div>
+          <div v-if="!data.claims?.length" class="muted small">暂无声明记录</div>
+          <div v-for="c in data.claims" :key="c.id || c.ts" class="claim">
+            <el-tag :type="claimStatus(c.status).type" size="small">
+              {{ claimStatus(c.status).label }}
+            </el-tag>
+            <div class="small claim-text">{{ c.claim }}</div>
+          </div>
+        </div>
+        <div class="ledger-card muted small">
+          学习门禁：{{ data.learn_gate }}
+        </div>
+      </aside>
     </div>
   </div>
 </template>
 
 <style scoped>
-.grid { display: grid; grid-template-columns: 1fr 320px; gap: 16px; }
-.md-card .md { line-height: 1.8; }
-.md :deep(h3) { color: var(--ea-accent); margin: 10px 0 4px; }
-.md :deep(h2) { font-size: 17px; border-bottom: 1px solid var(--ea-border); padding-bottom: 4px; }
-.md :deep(h4) { margin: 6px 0 2px; }
-.side { display: flex; flex-direction: column; gap: 16px; }
-.section { flex: 0 0 auto; }
-.conflict, .claim { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; border-bottom: 1px solid var(--ea-border); }
-.small { font-size: 12px; }
+.layout {
+  display: grid; grid-template-columns: 180px 1fr 300px; gap: 16px; align-items: start;
+}
+.chapters {
+  background: var(--ea-panel); border: 1px solid var(--ea-border);
+  border-radius: var(--ea-r-md); padding: 8px;
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 70vh; overflow-y: auto;
+}
+.ch-item {
+  padding: 8px 10px; border-radius: var(--ea-r-sm); cursor: pointer;
+  font-size: 13px; color: var(--ea-text-muted);
+}
+.ch-item:hover { background: var(--ea-panel-soft); color: var(--ea-text); }
+.ch-item.active { background: var(--ea-accent-soft); color: var(--ea-text); font-weight: 600; }
+.mem { min-width: 0; }
+.ledger { display: flex; flex-direction: column; gap: 12px; }
+.ledger-card {
+  background: var(--ea-panel); border: 1px solid var(--ea-border);
+  border-radius: var(--ea-r-md); padding: 12px 14px;
+}
+.lc-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
+.lc-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.claim { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.claim-text { line-height: 1.5; }
+
+@media (max-width: 1000px) {
+  .layout { grid-template-columns: 1fr; }
+  .chapters { flex-direction: row; overflow-x: auto; max-height: none; }
+  .ch-item { flex-shrink: 0; }
+}
 </style>
