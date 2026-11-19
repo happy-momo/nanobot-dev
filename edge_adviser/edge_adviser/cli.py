@@ -41,6 +41,12 @@ from .report.generator import ReportGenerator
 
 def _build(config_path: str | Path) -> "Context":
     config = load_config(config_path)
+    # Resolve a relative workspace against the config file's directory (same rule
+    # as server.deps.build_state) so CLI runs are independent of the process CWD
+    # and land in the same workspace the web HMI uses.
+    if not config.workspace.is_absolute():
+        base = Path(config_path).resolve().parent
+        config.workspace = (base / config.workspace).resolve()
     store = AssetStore(config.workspace)
     for asset in config.assets:
         store.ensure_asset(asset)
@@ -156,10 +162,11 @@ async def _cmd_feedback(c: _Context, asset_id: str, note: str) -> None:
 
 async def _cmd_serve(c: _Context) -> None:
     sup = _supervisor(c)
-    # simple loop: each asset every monitor_interval_s, deep report daily
+    # monitor each asset every monitor_interval_s; deep-report/learn fire on
+    # their configured cron expressions (no more hardcoded daily)
     import time
+    import datetime as _dt
     await sup.start()
-    last_deep: dict[str, float] = {}
     try:
         while True:
             for asset in c.config.assets:
@@ -173,13 +180,7 @@ async def _cmd_serve(c: _Context) -> None:
                 if isinstance(snap, dict) and snap.get("error"):
                     print(f"[serve] {asset.asset_id}: run not OK — {snap.get('error')} "
                           f"(state={snap.get('status', snap.get('error'))})")
-                now = time.time()
-                if now - last_deep.get(asset.asset_id, 0) >= 86400:
-                    try:
-                        await sup.run_deep_report(asset)
-                    except Exception as exc:
-                        print(f"[serve] deep report err {asset.asset_id}: {exc}")
-                    last_deep[asset.asset_id] = now
+                await sup.run_due_jobs(asset, _dt.datetime.now(_dt.timezone.utc))
             await asyncio.sleep(c.config.monitor_interval_s)
     finally:
         await sup.stop()

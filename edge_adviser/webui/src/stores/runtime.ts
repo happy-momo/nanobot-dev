@@ -132,6 +132,8 @@ interface RT {
   version: string
   dataFreshnessS: number
   _closers: Array<() => void>
+  _streamStatus: Record<string, SSEStatus>
+  loadError: string
 }
 
 export const useRuntime = defineStore('runtime', {
@@ -148,6 +150,8 @@ export const useRuntime = defineStore('runtime', {
     version: '',
     dataFreshnessS: 3600,
     _closers: [],
+    _streamStatus: {},
+    loadError: '',
   }),
   getters: {
     assets: (s) => s.overviewCards,
@@ -184,6 +188,7 @@ export const useRuntime = defineStore('runtime', {
   },
   actions: {
     async bootstrap(askPin: () => Promise<string | null>) {
+      this.loadError = ''
       try {
         await this.loadVersion()
         await this.loadOverview()
@@ -207,11 +212,19 @@ export const useRuntime = defineStore('runtime', {
             }
           }
         } else {
-          throw e
+          // Server unreachable / unexpected failure: surface it instead of
+          // leaving the app on a skeleton screen forever. The UI shows the
+          // message with a retry; the streams still start so a recovering
+          // backend repopulates live data.
+          this.loadError = e instanceof Error ? e.message : String(e)
         }
       }
       this.ready = true
       this.startStreams()
+    },
+    async retryBootstrap() {
+      await this.bootstrap(async () => null)
+      await this.loadOverview(true)
     },
     async loadVersion() {
       try {
@@ -244,7 +257,6 @@ export const useRuntime = defineStore('runtime', {
           headline: rt.headline,
           window_end: rt.window_end,
           sample_count: rt.sample_count,
-          metrics: rt.series?.length ? undefined : undefined,
         }
       }
     },
@@ -266,6 +278,17 @@ export const useRuntime = defineStore('runtime', {
       this.stopStreams()
       const stamp = () => { this.lastEventAt = Date.now() }
 
+      // Each stream reports its own health into _streamStatus; `conn` is the
+      // aggregate. Writing it directly from two callbacks made the indicator
+      // flap (one stream open + one reconnecting → status flipped on each event).
+      const setStatus = (name: string, st: SSEStatus) => {
+        this._streamStatus[name] = st
+        const states = Object.values(this._streamStatus)
+        if (states.includes('open')) this.conn = 'online'
+        else if (states.includes('connecting')) this.conn = 'connecting'
+        else this.conn = 'reconnecting'
+      }
+
       const closeTel = connectSSE('/stream/telemetry', (kind, data) => {
         stamp()
         if (kind === 'snapshot' && data && data.asset_id) {
@@ -281,9 +304,7 @@ export const useRuntime = defineStore('runtime', {
             card.runtime.headline = data.headline
           }
         }
-      }, (st: SSEStatus) => {
-        this.conn = st === 'open' ? 'online' : st === 'connecting' ? 'connecting' : 'reconnecting'
-      })
+      }, (st: SSEStatus) => setStatus('telemetry', st))
 
       const closeAlerts = connectSSE('/stream/alerts', (kind, data) => {
         stamp()
@@ -294,9 +315,7 @@ export const useRuntime = defineStore('runtime', {
           )
           if (!exists) this.alerts.unshift(data)
         }
-      }, (st: SSEStatus) => {
-        this.conn = st === 'open' ? 'online' : st === 'connecting' ? 'connecting' : 'reconnecting'
-      })
+      }, (st: SSEStatus) => setStatus('alerts', st))
 
       this._closers = [closeTel, closeAlerts]
     },

@@ -65,12 +65,12 @@ def selected(result):
         (".github/workflows/release-candidate.yml", {"python", "native"}),
         (".github/workflows/release-approve.yml", {"python", "native"}),
         (".github/workflows/tui-release.yml", {"python", "tui", "native"}),
-        ("pyproject.toml", {"python", "webui", "tui", "docker", "native"}),
-        ("hatch_build.py", {"python", "webui", "tui", "docker", "native"}),
-        ("scripts/install_channel_dependencies.py", {"python", "webui", "tui", "docker", "native"}),
-        (".github/workflows/ci.yml", {"python", "webui", "tui", "docker", "native"}),
-        ("scripts/ci_scope.py", {"python", "webui", "tui", "docker", "native"}),
-        ("nanobot/webui/build.py", {"python", "webui", "tui", "docker", "native"}),
+        ("pyproject.toml", {"python", "webui", "tui", "docker", "native", "edge"}),
+        ("hatch_build.py", {"python", "webui", "tui", "docker", "native", "edge"}),
+        ("scripts/install_channel_dependencies.py", {"python", "webui", "tui", "docker", "native", "edge"}),
+        (".github/workflows/ci.yml", {"python", "webui", "tui", "docker", "native", "edge"}),
+        ("scripts/ci_scope.py", {"python", "webui", "tui", "docker", "native", "edge"}),
+        ("nanobot/webui/build.py", {"python", "webui", "tui", "docker", "native", "edge"}),
         ("nanobot/webui/local_client_assets.py", {"python", "webui", "docker", "native"}),
     ],
 )
@@ -106,7 +106,7 @@ def test_union_preserves_each_reason():
         (["tests/webui/fixtures/runtime-config-keys.json", "tests/fixtures/sigstore/bundle_v3.txt"],
          {"python", "webui", "native"}),
         (["tests/session/fixtures/sqlite_v1.sql", "tests/webui/fixtures/new-contract.json"],
-         {"python", "webui", "tui", "docker", "native"}),
+         {"python", "webui", "tui", "docker", "native", "edge"}),
     ],
 )
 def test_fixture_requirements_combine_with_other_changed_paths(paths, expected):

@@ -39,6 +39,15 @@ function headers(): Record<string, string> {
   return h
 }
 
+// Invoked when an authenticated session suddenly receives 401 (e.g. the server
+// restarted without its persisted secret, or the token expired mid-shift).
+// App.vue registers a re-PIN flow here; without it the client would retry 401s
+// forever instead of prompting for the PIN again.
+let _onUnauthorized: (() => void) | null = null
+export function setUnauthorizedHandler(cb: (() => void) | null) {
+  _onUnauthorized = cb
+}
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   let res: Response
   try {
@@ -60,6 +69,11 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   if (env.ok) return env.data as T
   // treat unauth specially so the app can prompt for PIN
   if (res.status === 401) {
+    if (_token && _onUnauthorized) {
+      setToken('')
+      const cb = _onUnauthorized
+      cb()
+    }
     throw new UnauthorizedError(env.error || 'unauthorized')
   }
   throw new ApiError(env.error || `请求失败 (${res.status})`)

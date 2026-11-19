@@ -4,6 +4,57 @@
 
 ---
 
+## 0.4.1 — 2026-11-19（系统性加固：可信度契约修复 + 稳定性 + 安全 + cron 调度）
+
+对全部四个层面（分析引擎 / 调度 / HMI 服务端 / 前端）做了一次系统性代码审查，修复了审查确认的真实缺陷，并接入仓库 CI。全部 52 项测试通过。
+
+### 可信度契约（fact 层正确性）
+
+- **NaN/Inf 防护**：分析引擎此前只过滤 `None`，NaN 会污染全部统计并使快照序列化为非法 JSON（HMI 多个接口 500）。现在非数值/NaN/Inf 样本在进入统计前被丢弃，全 NaN 窗口判 UNKNOWN 而非"nominal"。
+- **分析异常不再逃逸**：`analyze()` 崩溃此前会被 web 循环的裸 `except` 吞掉——资产静默消失（无快照、无审计、永不判 OFFLINE）。pull 失败 / 空窗口 / 分析失败三条路径统一归档空快照 + runlog 审计 + 推进状态机。
+- **时区统一 UTC aware**：空快照此前用 naive 本地时间被读门禁当作 UTC 判定"永远新鲜"，绕过"无数据即拒绝"契约；runlog/报告/记忆/告警时间戳全部统一为 aware UTC；修复 aware/naive 混减导致的 `TypeError` 崩溃。
+- **报告结论链接通**：归档时把报告的 Executive Summary 提取为 `conclusion` 写入 snapshot.json，学习闭环的"上次报告结论"输入不再恒为空；对历史归档自动回退到从 report.md 提取。
+
+### 稳定性（长期运行）
+
+- **SSE/事件总线泄漏**：断开的浏览器此前永远留在订阅列表（幽灵订阅者，每次 publish 都往无人读的队列推数据）；`EventBus` 的内部队列只进不出。两者都已修复。
+- **数据 retention**：新增 `max_snapshots` / `max_runlog_rows` 配置（快照 2000、账本 10000 行，0=不限制），归档时自动剪枝——长期运行的边缘部署不再填满磁盘。
+- **异常设备告警链路**：持续 pull 失败的设备（判 OFFLINE 后）的空快照此前被 web 调度循环跳过、从不派生告警；现在正常广播并触发 offline 告警。
+- **空报告不再归档**：provider 全挂时不再把 `"(empty)"` 写入报告归档（假造一个"成功日"），改记 runlog `provider_failed`。
+- **错误码分类**：`ask`/`report`/`learn` 的失败区分 `no_fresh_snapshot`（数据问题）与 `provider_failed`（模型故障），前端分别渲染"门禁拒绝"与"模型服务不可用"，操作员不再被误导。
+- **cron 调度实现**：`deep_report_cron` / `learn_cron` 此前是虚设（从不生效）。新增 stdlib 轻量 cron 匹配器，CLI serve 与 web 循环按配置真实触发深度报告与学习，每分钟槽最多一次。
+- **同秒快照覆盖**：手动"立即采集"与调度 tick 同秒写盘时不再互相覆盖（文件名追加微秒消歧）。
+- **学习结论输入**、**Monitor 图表顺序**：`/snapshots` 端点统一旧→新返回，监控曲线不再时间倒序+右端回跳。
+
+### 安全
+
+- **PIN 暴破防护**：`/api/auth/pin` 增加滑动窗口限速（5 次失败锁定 5 分钟，锁定期间正确 PIN 也返回 429）。
+- **token 重启失效**：HMAC 密钥持久化到 workspace（0600），重启后已发 token 仍然有效；前端增加兜底——任何 401 自动清除失效 token 并重入 PIN 流程，操作员不再被锁死在 401 循环里。
+- **query token 收紧**：`?token=` 只对 GET/HEAD 生效（URL 中的 token 会进日志/历史，不得重放写操作）。
+- **demo 写防护**：demo 模式（无 PIN）拦截携带外部 Origin 的写请求（403），阻断跨站页面驱动演示系统。
+
+### 修复的配置与降级语义
+
+- **`--demo` 强制生效**：此前 `create_app` 先构建服务图（已选定真实 Gateway）后才设置 `config.demo`——强制演示模式实际仍用真模型。现在在构建前生效。
+- **CLI workspace 解析**：相对路径此前按进程 CWD 解析（与 server 行为不一致，0.3.0 的 CHANGELOG 宣称只对 server 成立）。CLI 现在与 server 同规则按配置文件目录解析。
+- **`model_preset` 降级链**：显式指定 preset 此后会替换候选链（失败即全挂）；现在改为前置，失败后继续走角色默认降级链。
+- **`config.sample.json`**：移除硬编码 Windows 路径与过期停机窗口、误导性的死配置 `api_base`。
+- **demo 同日重启**：tower1 的计划停机窗口现在每次启动重新注入，不再漂移成"断连"告警。
+
+### 前端
+
+- 连接状态聚合：两个 SSE 流不再互相覆盖 `conn`（状态抖动）。
+- 后端不可达时显示"无法连接服务器 + 重试"页面，不再永久骨架屏。
+- 任务流：被拒绝/失败的动作正确上报 `phase=failed`，不再显示为完成。
+
+### 工程
+
+- **edge_adviser 接入仓库 CI**：`ci_scope.py` 新增 `edge_required` 域，`ci.yml` 新增 edge job（editable 安装根包 + edge_adviser 及其测试依赖后跑 `pytest edge_adviser/tests`），纳入 required 门禁。
+- **测试 52 → 111**：新增四批回归测试（`test_p0_fixes` / `test_p1_fixes` / `test_p2_fixes` / `test_gateway`），覆盖每个修复；gateway 降级核心首次有测试。
+- **死代码清理**：删除 `analytics/windows.py`、`asdict_like`、`KIND_SCHEDULE`。
+
+---
+
 ## 0.4.0 — 2026-11-19（HMI 重构升级 + 后端 Demo 模式）
 
 在 0.3.0 的 HMI 基础上做 **UI 全面重设计 + 后端确定性 Demo 模式 + 一批真实 bug 修复**。一条命令即可启动完整的本地演示系统，无需任何 LLM/模型基础设施。

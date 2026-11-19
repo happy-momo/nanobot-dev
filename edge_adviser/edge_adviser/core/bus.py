@@ -28,7 +28,6 @@ class EventBus:
 
     def __init__(self, replay: int = 0) -> None:
         self._replay = replay
-        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._lock = asyncio.Lock()
         self._seq = itertools.count(1)
         self._watchers: list[tuple[set[str], set[str], Subscription]] = []
@@ -61,9 +60,6 @@ class EventBus:
                     await cb(event)
                 except Exception:  # noqa: BLE001 — a bad subscriber must not block others
                     pass
-        # fire-and-forget queue delivery is used by streaming relays that can run
-        # concurrently with the publisher (e.g. SSE relays). Push to queue too.
-        await self._queue.put(event)
 
     async def subscribe(
         self,
@@ -119,7 +115,6 @@ class EventBus:
 KIND_SNAPSHOT = "snapshot"      # a fresh AnalyticsSnapshot was archived
 KIND_ALERT = "alert"            # a real state change worth the operator's attention
 KIND_TASK = "task"              # write-side action progress/status (run/report/learn/ask)
-KIND_SCHEDULE = "schedule"      # scheduler tick / diagnostics
 
 
 def make_snapshot_event(asset_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:

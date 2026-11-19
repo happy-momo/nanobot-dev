@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -111,6 +111,25 @@ class AnalyticsSnapshot:
 # --------------------------------------------------------------------------- #
 def _as_float_array(values: list[float]) -> np.ndarray:
     return np.asarray(values, dtype=np.float64)
+
+
+def _finite_floats(values: list[Any]) -> list[float]:
+    """Convert to floats, dropping None/non-numeric/NaN/Inf entries.
+
+    NaN or Inf would poison every statistic (numpy propagates them) and leak
+    into JSON as invalid literals, so the fact layer refuses them up front.
+    """
+    out: list[float] = []
+    for v in values:
+        if v is None:
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(f):
+            out.append(f)
+    return out
 
 
 def _band_exceedance(values: np.ndarray, lo: float | None, hi: float | None,
@@ -213,7 +232,7 @@ def _change_point(y: np.ndarray) -> dict[str, Any] | None:
 # --------------------------------------------------------------------------- #
 def analyze_metric(values: list[float], ts_minutes: list[float] | None,
                    metric: MetricSpec) -> MetricResult:
-    y = _as_float_array(values)
+    y = _as_float_array(_finite_floats(values))
     res = MetricResult(key=metric.key, unit=metric.unit, n=int(y.size))
 
     # N1 / N3: data-coverage gate BEFORE computing statistics so that a sparse or
@@ -243,7 +262,7 @@ def analyze_metric(values: list[float], ts_minutes: list[float] | None,
     res.over_crit_samples = rcos
     res.slope, res.slope_r2 = _linear_slope(np.arange(y.size, dtype=np.float64), y)
     res.change_point = _change_point(y)
-    if ts_minutes and len(ts_minutes) > 1:
+    if ts_minutes and len(ts_minutes) > 1 and y.size >= 5:
         res.moving_mean_std = round(float(np.std(np.convolve(y, np.ones(5)/5, mode='valid'))), 4)
 
     # aggregate level (crit > warn > info). If a data-coverage verdict
@@ -270,7 +289,9 @@ def analyze(asset: AssetSpec, samples: list[dict[str, Any]], *,
 
     results: list[MetricResult] = []
     for m in asset.metrics:
-        values = [float(s[m.key]) for s in samples if m.key in s and s[m.key] is not None]
+        # non-numeric / None / NaN values are dropped by _finite_floats instead of
+        # raising, so a single malformed field cannot abort the whole window.
+        values = _finite_floats([s[m.key] for s in samples if m.key in s])
         results.append(analyze_metric(values, ts_min, m))
 
     overall = _overall_level(results)
@@ -384,7 +405,7 @@ def empty_snapshot(asset: AssetSpec, now: datetime | None = None,
     OFFICE-style callable record (for audit + feeding the state machine) instead
     of silently dropping the window. No metrics, overall UNKNOWN, coverage 0.
     """
-    now = now or datetime.now()
+    now = now or datetime.now(timezone.utc)
     iso = now.isoformat(timespec="seconds")
     return {
         "asset_id": asset.asset_id,

@@ -112,7 +112,12 @@ class LLMGateway:
         """
         candidates = self._role_for(role)
         if model_preset:
-            candidates = [ProviderSpec(role=ModelRole.ROUTINE, model_preset=model_preset)]
+            # an explicit preset goes FIRST, not alone: if it fails we still
+            # degrade through the role's remaining providers instead of giving
+            # up ("automatic degradation" must hold for every entry point)
+            forced = ProviderSpec(role=ModelRole.ROUTINE, model_preset=model_preset)
+            candidates = [forced] + [c for c in candidates
+                                     if c.model_preset != model_preset]
 
         attrs = dict(attributes or {})
         if blocks is not None:

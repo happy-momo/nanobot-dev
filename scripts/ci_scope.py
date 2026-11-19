@@ -16,17 +16,22 @@ import subprocess
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-JOBS = ("python_required", "webui_required", "tui_required", "docker_required", "native_required")
+JOBS = ("python_required", "webui_required", "tui_required", "docker_required", "native_required",
+        "edge_required")
 ALL = frozenset(JOBS)
 PYTHON = frozenset({"python_required"})
 DOCKER = frozenset({"docker_required"})
 WEBUI = frozenset({"webui_required"})
 TUI = frozenset({"tui_required"})
 NATIVE = frozenset({"native_required"})
+EDGE = frozenset({"edge_required"})
 
 # Ordered first-match rules. Keep Docker README inputs before documentation rules,
 # and embedded channel frontend trees before the Python production catch-all.
 RULES = (
+    # The edge_adviser subproject owns its own test suite and dependency set;
+    # changes there only need the edge lane (plus CI-contract files above).
+    (("edge_adviser/*",), EDGE, "edge_adviser subproject"),
     ((".github/workflows/ci.yml", ".github/workflows/native-acceptance.yml",
       "scripts/ci_scope.py", "tests/scripts/test_ci_scope.py",
       "scripts/native_acceptance_input.py", "tests/scripts/test_native_acceptance_input.py",

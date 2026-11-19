@@ -91,5 +91,9 @@ async def stream_bus(
                     await sub_task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
+            # Detach the relay from the bus too: cancelling the sentinel task does
+            # not remove the watcher, so a disconnected client would otherwise stay
+            # subscribed forever (a ghost whose queue grows on every publish).
+            await bus.unsubscribe(relay)
 
     return EventSourceResponse(_generator())

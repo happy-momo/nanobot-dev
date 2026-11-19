@@ -44,6 +44,10 @@ class ScheduleState:
     last_learn: float = 0.0
     next_learn_ok: bool = False
     consecutive_empty: int = 0  # N4: how many back-to-back empty windows
+    # cron slot bookkeeping: the last minute-slot each cron job fired in, so a
+    # job runs at most once per matching slot even across multiple ticks
+    last_deep_slot: Any = None
+    last_learn_slot: Any = None
 
 
 @dataclass
@@ -94,6 +98,39 @@ class Supervisor:
                 continue
             yield spec
 
+    def _save_and_prune(self, asset_id: str, snap_dict: dict[str, Any]) -> None:
+        """Archive a snapshot with configured retention (best-effort pruning)."""
+        self.store.save_snapshot(asset_id, snap_dict, keep=self.config.max_snapshots)
+        if self.config.runlog_enabled and self.config.max_runlog_rows > 0:
+            try:
+                self.store.truncate_jsonl(self.store.runlog_path(asset_id),
+                                          self.config.max_runlog_rows)
+            except Exception:  # noqa: BLE001 — pruning must never break a run
+                pass
+
+    def _archive_empty(self, asset: AssetSpec, st: ScheduleState,
+                       now: "Any", started: float, *, reason: str,
+                       kind: str) -> dict[str, Any]:
+        """Archive an empty-window snapshot, advance the offline counter, audit.
+
+        Shared by the pull-failed, empty-window, and analyze-failed paths so all
+        three produce the same auditable record and drive the OFFLINE state
+        machine identically.
+        """
+        import datetime as _dt
+        st.consecutive_empty += 1
+        state = classify_snapshot_state(
+            asset, {"sample_count": 0}, st.consecutive_empty, now, self.config)
+        snap_dict = empty_snapshot(asset, now, state=state)
+        self._save_and_prune(asset.asset_id, snap_dict)
+        self.learner.buffer_snapshot(asset.asset_id, snap_dict)
+        log_run_event(self.store, asset.asset_id, "run_once", kind,
+                      reason=f"{reason}; consecutive={st.consecutive_empty}",
+                      state=state.value)
+        snap_dict["_elapsed_s"] = round(time.time() - started, 3)
+        snap_dict.setdefault("error", reason if kind == "exception" else "")
+        return snap_dict
+
     async def run_once(self, asset: AssetSpec, src: DataSource | None = None) -> dict[str, Any]:
         """Pull, analyze, archive a single window for one asset.
 
@@ -115,26 +152,25 @@ class Supervisor:
         try:
             samples = await src.pull(start, now)
         except Exception as exc:
-            st.consecutive_empty += 1
-            log_run_event(self.store, asset.asset_id, "run_once", "exception",
-                          reason=f"pull failed: {exc}")
-            return {"asset_id": asset.asset_id, "error": f"pull failed: {exc}"}
+            # treat a failed pull exactly like an empty window: archive the empty
+            # snapshot and advance the state machine so persistent failures still
+            # reach OFFLINE and leave an audit trail instead of vanishing silently.
+            return self._archive_empty(asset, st, now, started,
+                                       reason=f"pull failed: {exc}", kind="exception")
         if not samples:
-            st.consecutive_empty += 1
-            state = classify_snapshot_state(
-                asset, {"sample_count": 0}, st.consecutive_empty, now, self.config)
-            snap_dict = empty_snapshot(asset, now, state=state)
-            self.store.save_snapshot(asset.asset_id, snap_dict)
-            self.learner.buffer_snapshot(asset.asset_id, snap_dict)
-            log_run_event(self.store, asset.asset_id, "run_once", "no_data",
-                          reason=f"empty_window; consecutive={st.consecutive_empty}",
-                          state=state.value)
-            snap_dict["_elapsed_s"] = round(time.time() - started, 3)
-            return snap_dict
-        st.consecutive_empty = 0
-        snapshot = analyze(asset, samples, source=src.kind, regime=regime)
+            return self._archive_empty(asset, st, now, started,
+                                       reason="empty_window", kind="no_data")
+        try:
+            st.consecutive_empty = 0
+            snapshot = analyze(asset, samples, source=src.kind, regime=regime)
+        except Exception as exc:
+            # analysis must never escape run_once: in web mode the loop swallows
+            # exceptions, which would drop the asset from monitoring with no
+            # snapshot, no runlog entry, and no offline transition.
+            return self._archive_empty(asset, st, now, started,
+                                       reason=f"analyze failed: {exc}", kind="exception")
         snap_dict = snapshot.to_dict()
-        self.store.save_snapshot(asset.asset_id, snap_dict)
+        self._save_and_prune(asset.asset_id, snap_dict)
         self.learner.buffer_snapshot(asset.asset_id, snap_dict)
         log_run_event(self.store, asset.asset_id, "run_once", "ok",
                       reason="", state=snap_dict.get("status"))
@@ -185,6 +221,16 @@ class Supervisor:
                     "state": gate.state.value}
         snap = gate.snapshot or {}
         result = await self.report_gen.generate(asset, snap, role=ModelRole.ONLINE)
+        # A provider failure produced no interpretation — archiving an "(empty)"
+        # report would fake a successful day. Record the failure in the runlog
+        # instead so "no report" stays traceable (P2) without polluting the
+        # report archive.
+        if result.error and not result.content.strip():
+            log_run_event(self.store, asset.asset_id, "deep_report", "provider_failed",
+                          reason=result.error)
+            return {"asset_id": asset.asset_id,
+                    "error": f"provider_failed: {result.error}",
+                    "state": gate.state.value}
         outdir = self.report_gen.archive(
             asset, snap, result.content or "(empty)",
             source="", degraded=result.degraded, provider=result.used_provider,
@@ -195,21 +241,66 @@ class Supervisor:
     async def run_learn(self, asset: AssetSpec) -> LLMResult:
         return await self.learner.learn_asset(asset, role=ModelRole.ONLINE)
 
+    async def run_due_jobs(self, asset: AssetSpec, now: "Any") -> None:
+        """Fire deep-report / learn when their cron expressions are due.
+
+        The configured ``deep_report_cron`` / ``learn_cron`` promise scheduled
+        runs; this is what actually honors them. Both CLI ``serve`` and the web
+        scheduler loop call this once per tick per asset. A job runs at most
+        once per cron-slot: the last-fired wall clock must be strictly before
+        the slot boundary this tick belongs to. Errors are logged and audited,
+        never raised into the calling loop.
+        """
+        from ..core.cron import cron_matches
+
+        st = self._state.setdefault(asset.asset_id, ScheduleState())
+        slot = now.replace(second=0, microsecond=0)
+        fired_deep = fired_learn = False
+        try:
+            if self.config.deep_report_cron and \
+                    cron_matches(self.config.deep_report_cron, now) and \
+                    (st.last_deep_slot is None or st.last_deep_slot < slot):
+                st.last_deep_slot = slot
+                fired_deep = True
+                await self.run_deep_report(asset)
+        except Exception as exc:  # noqa: BLE001 — cron jobs must not kill the loop
+            logger.error("deep report failed for {a}: {e}", a=asset.asset_id, e=exc)
+            log_run_event(self.store, asset.asset_id, "deep_report", "exception",
+                          reason=str(exc)[:200])
+        try:
+            if self.config.learn_cron and \
+                    cron_matches(self.config.learn_cron, now) and \
+                    (st.last_learn_slot is None or st.last_learn_slot < slot):
+                st.last_learn_slot = slot
+                fired_learn = True
+                await self.run_learn(asset)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("learn failed for {a}: {e}", a=asset.asset_id, e=exc)
+            log_run_event(self.store, asset.asset_id, "learn", "exception",
+                          reason=str(exc)[:200])
+        if fired_deep:
+            st.last_deep = time.time()
+        if fired_learn:
+            st.last_learn = time.time()
+
 
 async def _main(supervisor: Supervisor) -> None:
-    """Reccurring loop (kept here as a helper; the CLI drives it)."""
+    """Reference recurring loop: monitor every tick + cron-scheduled jobs.
+
+    The CLI ``serve`` command and the web scheduler loop each implement this
+    pattern with their own delivery concerns (printing / bus publishing); this
+    helper stays for SDK-style embedding.
+    """
+    import datetime as _dt
     await supervisor.start()
     try:
         while True:
             for asset in supervisor.config.assets:
-                st = supervisor._state.setdefault(asset.asset_id, ScheduleState())
-                now = time.time()
-                if now - st.last_deep >= 3600 * 24:
-                    try:
-                        await supervisor.run_deep_report(asset)
-                    except Exception as exc:
-                        logger.error("deep report failed: {e}", e=exc)
-                    st.last_deep = now
+                try:
+                    await supervisor.run_once(asset)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("run failed for {a}: {e}", a=asset.asset_id, e=exc)
+                await supervisor.run_due_jobs(asset, _dt.datetime.now(_dt.timezone.utc))
             await asyncio.sleep(supervisor.monitor_interval_s)
     finally:
         await supervisor.stop()

@@ -147,6 +147,12 @@ async def publish_alert(state: AppState, asset_id: str, snapshot: dict[str, Any]
     alert = ingest_alert(state, asset_id, snapshot)
     if alert is None:
         return
+    # retention: keep the alerts ledger bounded with the same cap as the runlog
+    try:
+        state.store.truncate_jsonl(_alerts_path(state.store, asset_id),
+                                   state.config.max_runlog_rows)
+    except Exception:  # noqa: BLE001 — pruning must never break alerting
+        pass
     try:
         await state.bus.publish(KIND_ALERT, asset_id, payload=alert)
     except Exception:  # noqa: BLE001

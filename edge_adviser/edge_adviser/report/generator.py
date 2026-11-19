@@ -12,7 +12,7 @@ the asset's historical knowledge so the learn loop can reference it.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -84,7 +84,7 @@ class ReportGenerator:
 
         badge_md = render_frontmatter(build_badge(snapshot))
         prompt = _REPORT_PROMPT.format(
-            date_text=datetime.now().strftime("%Y-%m-%d %H:%M"),
+            date_text=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
             badge=badge_md,
         )
         session_key = asset_session(asset.asset_id, "report")
@@ -107,28 +107,32 @@ class ReportGenerator:
         `day` overrides the archive date (YYYY-MM-DD) — used by the demo seeder to
         backdate reports; defaults to today.
         """
-        day = day or datetime.now().strftime("%Y-%m-%d")
+        day = day or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         out = self.store.reports_dir(asset.asset_id) / day
         out.mkdir(parents=True, exist_ok=True)
 
         # P3: the badge is written directly (deterministic), not left to the model.
         meta = build_badge(snapshot, provider=provider, degraded=degraded,
-                           generated_at=generated_at or datetime.now().isoformat(timespec="seconds"))
+                           generated_at=generated_at or datetime.now(timezone.utc).isoformat(timespec="seconds"))
         front = render_frontmatter(meta)
         md = (
-            f"<!-- asset: {asset.asset_id} | generated: {datetime.now().isoformat(timespec='seconds')} | provider: {provider} | degraded: {degraded} -->\n"
+            f"<!-- asset: {asset.asset_id} | generated: {datetime.now(timezone.utc).isoformat(timespec='seconds')} | provider: {provider} | degraded: {degraded} -->\n"
             f"{front}"
             f"{'--- end data-scope ---'}\n\n"
             f"{report_md}\n"
         )
         (out / "report.md").write_text(md, encoding="utf-8")
 
+        # Persist the extracted one-line conclusion so the learn loop's
+        # _prev_conclusion (which reads this file) actually sees the previous
+        # report's takeaway instead of a permanent "(no previous report)".
         snapshot_doc = {
             "asset_id": asset.asset_id,
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "provider": provider,
             "degraded": degraded,
             "source": source,
+            "conclusion": _extract_conclusion(report_md),
             "meta": meta.to_dict(),
             "snapshot": snapshot,
         }

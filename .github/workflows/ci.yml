@@ -25,6 +25,7 @@ jobs:
       tui_required: ${{ steps.paths.outputs.tui_required }}
       docker_required: ${{ steps.paths.outputs.docker_required }}
       native_required: ${{ steps.paths.outputs.native_required }}
+      edge_required: ${{ steps.paths.outputs.edge_required }}
 
     steps:
       - uses: actions/checkout@v4
@@ -580,9 +581,51 @@ jobs:
           'test -w /app/.venv && test ! -w /app && test ! -w /app/nanobot &&
           python -m scripts.install_channel_dependencies discord && python -c "import discord"'
 
+  edge:
+    name: edge_adviser tests
+    needs: changes
+    if: needs.changes.outputs.edge_required == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      # The edge_adviser suite imports the nanobot package (via its gateway), so
+      # the root nanobot-ai is installed editable (satisfying edge_adviser's
+      # nanobot-ai>=0.4.0 requirement) alongside its own test dependencies.
+      - name: Install edge_adviser with test dependencies
+        run: |
+          uv pip install --system -e ".[edge-test]" -e "edge_adviser/" pytest pytest-asyncio
+
+      - name: Run edge_adviser tests
+        run: >-
+          python -m pytest edge_adviser/tests -q
+          --junitxml=test-results/edge.xml
+          --durations=10 --durations-min=1.0
+
+      - name: Upload edge_adviser test timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-timings
+          path: test-results/
+          retention-days: 7
+
   required:
     name: CI required
-    needs: [changes, test, windows_process, windows_installers, webui_checks, webui_browser, webui, tui, docker, native]
+    needs: [changes, test, windows_process, windows_installers, webui_checks, webui_browser, webui, tui, docker, native, edge]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

@@ -73,12 +73,17 @@ async function send(q?: string) {
       })
     }
   } catch (e: any) {
-    // distinguish the deterministic gate refusal from a transport/server error
+    // distinguish the deterministic gate refusal from a model outage
     const msg = String(e?.message || e)
     const isGate = msg.includes('no_fresh_snapshot')
+    const isProvider = msg.includes('provider_failed')
     threads.value[id].push({
       role: 'assistant',
-      text: isGate ? '无新鲜快照，已拒绝回答（未调用模型）。请先采集到新鲜数据。' : msg,
+      text: isGate
+        ? '无新鲜快照，已拒绝回答（未调用模型）。请先采集到新鲜数据。'
+        : isProvider
+          ? '模型服务不可用（已调用但全部 provider 失败）。请检查模型配置或网络。'
+          : msg,
       kind: isGate ? 'refused' : 'error',
       ts: Date.now(),
     })

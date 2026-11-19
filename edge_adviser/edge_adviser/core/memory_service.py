@@ -23,7 +23,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config.model import AssetSpec
@@ -181,7 +181,7 @@ class MemoryConflictLedger:
                 "id": _claim_id(sec.title),
                 "heading": sec.title,
                 "text": sec.title + " " + sec.body,
-                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "source_window": source_window,
                 "status": "active",
             }
@@ -206,7 +206,7 @@ class MemoryConflictLedger:
                     "heading": claim.get("heading", ""),
                     "old": prev.get("text", ""),
                     "new": claim.get("text", ""),
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                    "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 })
             active[key] = claim
         # rewrite claims with superseded statuses so the file reflects reality
@@ -303,8 +303,13 @@ class MemoryService:
                 age = 0.0
                 try:
                     created = datetime.fromisoformat(c.get("created_at", ""))
-                    age = (datetime.now() - created).total_seconds()
-                except ValueError:
+                    # claims may carry naive (legacy) or aware (UTC) timestamps;
+                    # normalize to aware UTC before subtracting or this raises
+                    # TypeError and takes down retrieve() for every query.
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    age = (datetime.now(timezone.utc) - created).total_seconds()
+                except (ValueError, TypeError):
                     pass
                 if c.get("status") == "stale" or (self._decay_s and age > self._decay_s):
                     staled.add(heading)

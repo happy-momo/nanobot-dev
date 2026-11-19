@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from ..analytics.gates import gate_snapshot_for_read
 from ..config.model import ModelRole
-from ..core.bus import KIND_ALERT, KIND_SCHEDULE, KIND_SNAPSHOT, KIND_TASK, make_snapshot_event
+from ..core.bus import KIND_ALERT, KIND_SNAPSHOT, KIND_TASK, make_snapshot_event
 from .deps import AppState
 from .schemas import fail, ok
 from .streaming import stream_bus
@@ -85,6 +85,7 @@ async def run_now(request: Request, asset_id: str) -> Any:
     async with _task(state, asset_id, "run-now") as task:
         snap = await state.supervisor.run_once(asset)
         if isinstance(snap, dict) and snap.get("error"):
+            task.mark_failed()
             return fail(f"run not OK: {snap.get('error')}", data={"token": task.token})
         from .alerts import publish_alert
         await _publish_snapshot(state, asset_id, snap)
@@ -102,7 +103,11 @@ async def report(request: Request, asset_id: str) -> Any:
     async with _task(state, asset_id, "report") as task:
         res = await state.supervisor.run_deep_report(asset)
         if isinstance(res, dict) and res.get("error"):
-            return fail(f"report gated: {res.get('error')}", data={"token": task.token})
+            # keep the deterministic error taxonomy: gate refusals carry
+            # no_fresh_snapshot, model outages carry provider_failed — the UI
+            # renders them differently ("data problem" vs "model problem").
+            task.mark_failed()
+            return fail(res["error"], data={"token": task.token})
         res["token"] = task.token
         return ok(data=res)
 
@@ -116,7 +121,13 @@ async def learn(request: Request, asset_id: str) -> Any:
     async with _task(state, asset_id, "learn") as task:
         res = await state.supervisor.run_learn(asset)
         if res.error:
-            return fail(f"learn gated: {res.error}", data={"token": task.token})
+            # same taxonomy: learner errors already carry the deterministic reason
+            # (no snapshots / insufficient_data); bare provider failures get the
+            # provider_failed code so the UI shows a model outage, not a data gate.
+            err = res.error if res.error.startswith(("no_", "insufficient_data")) \
+                else f"provider_failed: {res.error}"
+            task.mark_failed()
+            return fail(err, data={"token": task.token})
         return ok(data={"content": res.content[:400], "token": task.token})
 
 
@@ -144,7 +155,11 @@ async def ask(request: Request, asset_id: str, body: AskIn) -> Any:
     # like a real answer, so the HMI surfaces it as ok=false and does NOT render it
     # as an LLM answer. The model was never called in this path.
     if res.error:
-        return fail(f"no_fresh_snapshot: {res.error}")
+        # QAEngine returns error="no_fresh_snapshot: ..." for gate refusals;
+        # anything else is a provider outage. Pass the code through untouched so
+        # the UI can distinguish "no data to assess" from "model unavailable".
+        return fail(res.error if res.error.startswith("no_fresh_snapshot")
+                    else f"provider_failed: {res.error}")
     return ok(data={
         "content": res.content,
         "used_provider": res.used_provider,
@@ -160,6 +175,7 @@ class _task:
         self.asset_id = asset_id
         self.kind = kind
         self.token = uuid4().hex  # unique per action so /stream/task/{token} can isolate it
+        self.failed = False  # set by handlers returning fail() so __aexit__ reports it
 
     async def __aenter__(self):
         await self.state.bus.publish(KIND_TASK, self.asset_id,
@@ -167,8 +183,12 @@ class _task:
                                               "phase": "start"})
         return self
 
+    def mark_failed(self) -> None:
+        self.failed = True
+
     async def __aexit__(self, exc_type, exc, tb):
-        phase = "failed" if exc else "done"
-        await self.state.bus.publish(KIND_TASK, self.asset_id,
-                                     payload={"token": self.token, "kind": self.kind,
-                                              "phase": phase})
+        phase = "failed" if (exc or self.failed) else "done"
+        payload = {"token": self.token, "kind": self.kind, "phase": phase}
+        if exc_type is not None:
+            payload["error"] = str(exc)
+        await self.state.bus.publish(KIND_TASK, self.asset_id, payload=payload)

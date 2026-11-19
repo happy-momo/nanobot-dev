@@ -93,6 +93,18 @@ documents = [
 langfuse = [
     "langfuse>=4.7.0,<5.0.0",
 ]
+# Test-only lane for the edge_adviser subproject (its own runtime deps live in
+# edge_adviser/pyproject.toml; this extra makes the CI job one-shot installable).
+edge-test = [
+    "numpy>=1.26",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "sse-starlette>=2.0",
+    "loguru",
+    "json-repair",
+    "aiohttp>=3.9.0,<4.0.0",
+    "httpx",
+]
 pdf = [
     # Compatibility extra: PDF reading is bundled since v0.2.3.
     "pypdf>=6.21.3,<7.0.0",

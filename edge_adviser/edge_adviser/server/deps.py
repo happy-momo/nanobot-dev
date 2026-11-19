@@ -70,13 +70,21 @@ class AppState:
         await self.bus.aclose()
 
 
-def build_state(config_path: str | Path, gateway: Any | None = None) -> AppState:
+def build_state(config_path: str | Path, gateway: Any | None = None,
+                demo: bool | None = None) -> AppState:
     """Load the config from disk and build the full service graph.
 
     The workspace is resolved against the config file's directory so a daemon or
     manual launch is consistent regardless of the process CWD (fixes a CLI trap).
+
+    ``demo`` forces demo mode BEFORE the service graph is built — the gateway
+    choice (MockGateway vs LLMGateway) is made inside AppState, so setting
+    ``config.demo`` afterwards would leave a real gateway wired while claiming
+    to be a demo run.
     """
     cfg = load_config(config_path)
+    if demo is not None:
+        cfg.demo = bool(demo)
     if not cfg.workspace.is_absolute():
         base = Path(config_path).resolve().parent
         cfg.workspace = (base / cfg.workspace).resolve()

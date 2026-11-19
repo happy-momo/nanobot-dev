@@ -251,6 +251,11 @@ class AdviserConfig:
     memory_decay_s: int = 7776000  # 90 days
     # P2: record append-only runlog.jsonl for every asset.
     runlog_enabled: bool = True
+    # Retention: keep at most this many snapshot files / runlog+alert rows per
+    # asset. Older files are pruned on each archived snapshot so a long-running
+    # edge deployment cannot fill its disk (0 = unlimited, legacy behavior).
+    max_snapshots: int = 2000
+    max_runlog_rows: int = 10000
 
     # ---- HMI (human-machine interface) settings ----------------------------
     # Optional shared access PIN for the web UI. "none" (default) = LAN open.
@@ -268,12 +273,3 @@ class AdviserConfig:
 
     def asset(self, asset_id: str) -> AssetSpec | None:
         return next((a for a in self.assets if a.asset_id == asset_id), None)
-
-
-def asdict_like(obj: Any) -> dict[str, Any]:
-    """Convert a dataclass instance (or object) to a plain dict for JSON."""
-    if isinstance(obj, dataclass):
-        return asdict(obj)
-    if hasattr(obj, "to_dict"):
-        return obj.to_dict()
-    return dict(obj)

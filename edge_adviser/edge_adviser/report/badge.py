@@ -9,7 +9,7 @@ responsibility and into the deterministic layer where it is auditable.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..analytics.gates import trust_from_state
@@ -42,7 +42,7 @@ def build_badge(
         data_source=str(snapshot.get("source", "")),
         provider=provider,
         degraded=degraded,
-        generated_at=generated_at or datetime.now().isoformat(timespec="seconds"),
+        generated_at=generated_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         state_reason=str(snapshot.get("state_reason", "")),
     )
 

@@ -7,10 +7,10 @@ def results(*domains):
     return {
         "changes": {"result": "success", "outputs": {
             f"{domain}_required": str(domain in domains).lower()
-            for domain in ("python", "webui", "tui", "docker", "native")
+            for domain in ("python", "webui", "tui", "docker", "native", "edge")
         }},
         **{job: {"result": "skipped"} for job in (
-            "test", "windows_process", "windows_installers", "webui_checks", "webui_browser", "webui", "tui", "docker", "native",
+            "test", "windows_process", "windows_installers", "webui_checks", "webui_browser", "webui", "tui", "docker", "native", "edge",
         )},
     }
 

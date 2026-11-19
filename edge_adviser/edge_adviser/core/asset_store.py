@@ -16,7 +16,7 @@ knowledge. This store also keeps simple append-only feedback in
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -83,15 +83,69 @@ class AssetStore:
     # ------------------------------------------------------------------ #
     # snapshots
     # ------------------------------------------------------------------ #
-    def save_snapshot(self, asset_id: str, snapshot: dict[str, Any]) -> Path:
+    def save_snapshot(self, asset_id: str, snapshot: dict[str, Any],
+                      keep: int = 0) -> Path:
         # Filename derives from the window end so snapshots are naturally
         # time-ordered (sorted listing = chronological history) and JSON-safe.
-        ts = snapshot.get("window_end") or datetime.now().isoformat(timespec="seconds")
+        ts = snapshot.get("window_end") or datetime.now(timezone.utc).isoformat(timespec="seconds")
         safe = ts.replace(":", "-").replace("/", "-")
         p = self.snapshots_dir(asset_id) / f"{safe}.json"
+        if p.exists():
+            # Same-second collisions (run-now racing the scheduler tick) must not
+            # silently overwrite the earlier record — disambiguate instead.
+            suffix = datetime.now(timezone.utc).strftime("%H%M%S%f")
+            p = self.snapshots_dir(asset_id) / f"{safe}-{suffix}.json"
         with open(p, "w", encoding="utf-8") as f:
             json.dump(snapshot, f, ensure_ascii=False, indent=2)
+        if keep > 0:
+            self.prune_snapshots(asset_id, keep)
         return p
+
+    def prune_snapshots(self, asset_id: str, keep: int) -> int:
+        """Delete the oldest snapshot files beyond the newest ``keep``.
+
+        Called after each save so a long-running deployment cannot accumulate
+        files unboundedly. Returns the number of files removed.
+        """
+        if keep <= 0:
+            return 0
+        files = sorted(self.snapshots_dir(asset_id).glob("*.json"), reverse=True)
+        removed = 0
+        for old in files[keep:]:
+            try:
+                old.unlink()
+                removed += 1
+            except OSError:
+                pass
+        return removed
+
+    def truncate_jsonl(self, path: Path, keep: int) -> int:
+        """Rewrite a .jsonl ledger keeping only its newest ``keep`` rows.
+
+        Used for runlog/alerts ledgers that would otherwise grow without bound.
+        Returns the number of rows dropped.
+        """
+        if keep <= 0 or not path.exists():
+            return 0
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return 0
+        data = [ln for ln in lines if ln.strip()]
+        if len(data) <= keep:
+            return 0
+        dropped = len(data) - keep
+        tmp = path.with_suffix(".jsonl.tmp")
+        try:
+            tmp.write_text("\n".join(data[-keep:]) + "\n", encoding="utf-8")
+            tmp.replace(path)
+        except OSError:
+            # best-effort: a failed truncation must not break the caller
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return dropped
 
     def list_snapshots(self, asset_id: str, limit: int = 50) -> list[Path]:
         files = sorted(self.snapshots_dir(asset_id).glob("*.json"), reverse=True)
@@ -157,7 +211,7 @@ class AssetStore:
     # ------------------------------------------------------------------ #
     def append_feedback(self, asset_id: str, note: str, **extra: Any) -> None:
         rec = {
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "note": note,
             **extra,
         }

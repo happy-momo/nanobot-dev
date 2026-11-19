@@ -1,5 +1,5 @@
 {
-  "workspace": "e:/prj/nanobot-dev/edge_adviser/workspace",
+  "workspace": "workspace",
   "monitor_interval_s": 30,
   "deep_report_cron": "0 6 * * *",
   "learn_cron": "0 3 * * *",
@@ -26,7 +26,6 @@
     },
     "offline": {
       "model_preset": "ollama-qwen",
-      "api_base": "http://127.0.0.1:11434",
       "timeout_s": 180,
       "max_tokens": 2048
     },
@@ -44,9 +43,7 @@
       "description": "High-pressure feed pump for the cement raw-mill slurry line.",
       "sample_freq_s": 1.0,
       "window_s": 60,
-      "downtime_windows": [
-        { "start": "2026-01-01T00:00:00Z", "end": "2026-01-01T08:00:00Z" }
-      ],
+      "downtime_windows": [],
       "scenario_notes": [
         "Pump P-201 feeds raw slurry to the cement mill at 30 m3/h nominal.",
         "Vibration above 4.5 mm/s historically preceded bearing replacement.",

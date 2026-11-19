@@ -33,7 +33,7 @@ MARKER = ".demo_seed.json"
 
 
 def _today() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 def _seeded_today(state: AppState) -> bool:
@@ -54,11 +54,14 @@ def _mark_seeded(state: AppState) -> None:
 
 async def seed_demo_workspace(state: AppState) -> None:
     """Populate the demo workspace (idempotent per day)."""
+    # The downtime window must be re-injected on EVERY startup (it is an
+    # in-memory window anchored to `now`), before the seeded-today early return:
+    # without this, a same-day restart leaves tower1's placeholder window and
+    # the demo asset drifts from "planned downtime" to an OFFLINE alarm.
+    _inject_demo_downtime(state)
     if _seeded_today(state):
         return
     now = datetime.now(timezone.utc)
-
-    _inject_demo_downtime(state)
 
     for asset in state.config.assets:
         await _seed_asset_snapshots(state, asset, now)

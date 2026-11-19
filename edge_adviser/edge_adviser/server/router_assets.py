@@ -85,6 +85,9 @@ async def snapshots(request: Request, asset_id: str, limit: int = 50,
     if asset is None:
         return fail("unknown asset")
     files = state.store.list_snapshots(asset_id, limit=limit)
+    # `list_snapshots` is newest-first (for "latest snapshot" reads); charts want
+    # oldest-first, matching the overview sparkline convention, so reverse here.
+    files = list(reversed(files))
     rows = []
     for f in files:
         s = state.store.read_persisted_snapshot(asset_id, f.name)

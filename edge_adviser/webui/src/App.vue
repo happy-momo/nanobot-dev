@@ -10,6 +10,7 @@ import {
   Comment, Setting as SettingIcon, Tickets, Tools, Expand,
 } from '@element-plus/icons-vue'
 import { useRuntime } from './stores/runtime'
+import { api, setToken, setUnauthorizedHandler } from './api/http'
 import ConnStatus from './components/ConnStatus.vue'
 
 const rt = useRuntime()
@@ -64,6 +65,22 @@ async function askPin(): Promise<string> {
     return ''
   }
 }
+
+// Mid-session 401 (server restarted without its secret, token expired): drop the
+// stale token and re-run the PIN flow instead of letting every request 401-loop.
+setUnauthorizedHandler(async () => {
+  try {
+    rt.stopStreams()
+    const pin = await askPin()
+    if (!pin) return
+    const r = await api.post<any>('/api/auth/pin', { pin })
+    setToken(r?.data?.token || '')
+    await rt.bootstrap(async () => null)  // token already set; no second prompt
+    await rt.loadOverview(true)
+  } catch {
+    // keep the app usable; next 401 will re-trigger the prompt
+  }
+})
 
 onMounted(async () => {
   await rt.bootstrap(() => askPin())
@@ -171,7 +188,15 @@ function onNavClick() {
         </el-badge>
         <ConnStatus />
       </header>
-      <router-view />
+      <router-view v-if="!rt.loadError" />
+      <div v-else class="load-error">
+        <el-result icon="warning" title="无法连接服务器"
+                   :sub-title="rt.loadError">
+          <template #extra>
+            <el-button type="primary" @click="rt.retryBootstrap()">重试</el-button>
+          </template>
+        </el-result>
+      </div>
     </main>
   </div>
 </template>
@@ -219,6 +244,8 @@ function onNavClick() {
 .role-btn { width: 100%; }
 .collapsed .role-toggle { padding: 8px; }
 .collapsed .nav-item { justify-content: center; padding: 12px 0; }
+
+.load-error { padding: 60px 20px; }
 
 .content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; min-width: 0; }
 .topbar {

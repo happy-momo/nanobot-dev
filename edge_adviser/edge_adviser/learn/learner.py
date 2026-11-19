@@ -185,16 +185,27 @@ class Learner:
         return out
 
     def _prev_conclusion(self, asset_id: str) -> str:
-        # iterate reports dir newest
+        # iterate reports dir newest; fall back to extracting from report.md for
+        # archives written before the conclusion was persisted into snapshot.json
         files = sorted(self.store.reports_dir(asset_id).glob("*/snapshot.json"))
         if not files:
             return ""
         try:
             import json
             doc = json.loads(files[-1].read_text(encoding="utf-8"))
-            return str(doc.get("conclusion", ""))[:500]
+            conclusion = str(doc.get("conclusion", ""))[:500]
+            if conclusion:
+                return conclusion
         except Exception:
-            return ""
+            pass
+        try:
+            from ..report.generator import _extract_conclusion
+            report_md = files[-1].parent / "report.md"
+            if report_md.exists():
+                return _extract_conclusion(report_md.read_text(encoding="utf-8"))[:500]
+        except Exception:
+            pass
+        return ""
 
 
 def _fmt_feedback(feedback: list[dict[str, Any]], limit: int = 10) -> str:

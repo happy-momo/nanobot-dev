@@ -11,7 +11,7 @@ are append-only JSON lines; reads are best-effort with a row limit.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..config.model import RunLogEntry
@@ -27,7 +27,7 @@ def log_run_event(
     **detail: Any,
 ) -> None:
     """Append one audit record for an asset."""
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     entry = RunLogEntry(
         asset_id=asset_id,
         date=now.strftime("%Y-%m-%d"),
