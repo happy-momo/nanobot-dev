@@ -146,9 +146,9 @@ class Learner:
         config = self.config
         state_raw = latest.get("status")
         try:
-            state = AssetState(state_raw) if state_raw else AssetState.HEALTHY
+            state = AssetState(state_raw) if state_raw else AssetState.UNKNOWN
         except ValueError:
-            state = AssetState.HEALTHY
+            state = AssetState.UNKNOWN  # fail closed: unrecognized status ≠ healthy
 
         hard_skip = state in (AssetState.OFFLINE, AssetState.UNKNOWN,
                               AssetState.STALE, AssetState.PLANNED_DOWNTIME)

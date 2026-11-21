@@ -89,20 +89,36 @@ export function fmtNum(v: number | null | undefined, digits = 1): string {
 }
 
 export function formatTs(ts: string | number | undefined | null): string {
-  if (!ts) return '—'
-  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
-  if (Number.isNaN(d.getTime())) return String(ts)
+  const t = toEpochMs(ts)
+  if (t === null) return ts ? String(ts) : '—'
+  const d = new Date(t)
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
          `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
-/** Relative age like "42 秒前" / "5 分钟前" / "3 小时前" / "2 天前". */
-export function relativeTime(ts: string | number | undefined | null, now = Date.now()): string {
-  if (!ts) return '—'
-  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts)
-  if (Number.isNaN(d.getTime())) return String(ts)
-  const diff = Math.max(0, Math.floor((now - d.getTime()) / 1000))
+/** Normalize any backend timestamp (ISO string or epoch seconds) to epoch ms.
+ * Epoch-seconds and epoch-millis are disambiguated (acked_at arrived in both
+ * units across code paths); ISO strings parse as absolute instants. */
+export function toEpochMs(ts: string | number | undefined | null): number | null {
+  if (ts === undefined || ts === null || ts === '') return null
+  if (typeof ts === 'number') {
+    // < 1e12 → epoch seconds; ≥ 1e12 → already milliseconds
+    return ts < 1e12 ? ts * 1000 : ts
+  }
+  const d = new Date(ts)
+  return Number.isNaN(d.getTime()) ? null : d.getTime()
+}
+
+/** Relative age like "42 秒前" / "5 分钟前" / "3 小时前" / "2 天前".
+ * `nowMs` lets callers pass a reactive clock so ages advance without waiting
+ * for an unrelated re-render; future timestamps read as "刚刚" (never negative). */
+export function relativeTime(ts: string | number | undefined | null, nowMs?: number): string {
+  const t = toEpochMs(ts)
+  if (t === null) return ts ? String(ts) : '—'
+  const now = nowMs ?? Date.now()
+  const diff = Math.floor((now - t) / 1000)
+  if (diff < 5) return '刚刚'
   if (diff < 60) return `${diff} 秒前`
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
   if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`

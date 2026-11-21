@@ -30,11 +30,13 @@ const liveTs = ref<string>('')
 const card = computed(() => rt.assetById(assetId.value))
 const live = computed(() => rt.liveFor(assetId.value))
 
-// freshness: window_end age vs the configured data_freshness_s
+// freshness: window_end age vs the configured data_freshness_s. Reactive on
+// rt.nowSec so the countdown actually advances; a future window_end (clock
+// skew) reads as full bar rather than a negative-age glitch.
 const freshness = computed(() => {
   const we = live.value?.window_end || card.value?.runtime.window_end
   if (!we || !rt.dataFreshnessS) return null
-  const age = Date.now() - new Date(we).getTime()
+  const age = Math.max(0, rt.nowSec * 1000 - new Date(we).getTime())
   return { age, ratio: Math.min(1, age / (rt.dataFreshnessS * 1000)) }
 })
 
@@ -45,6 +47,7 @@ const specs = computed(() => card.value?.config?.metrics || card.value?.metrics 
 // live tick metrics → most recent history row with metrics → config spec order.
 const metricKeys = computed<string[]>(() => {
   if (liveTick.value?.length) return liveTick.value.map((m) => m.key)
+  // history is oldest→newest; scan from the tail for the newest row with metrics
   const withMetrics = [...history.value].reverse().find((r) => r.metrics?.length)
   if (withMetrics?.metrics?.length) return withMetrics.metrics.map((m) => m.key)
   if (specs.value.length) return specs.value.map((m) => m.key)
@@ -125,12 +128,15 @@ function watchAsset() {
       liveTick.value = data.metrics || []
       liveTs.value = data.window_end || ''
       rt.live[assetId.value] = { ...rt.live[assetId.value], ...data }
-      // prepend so the chart moves immediately (dedup handled in buildSeries)
+      // merge in CHRONOLOGICAL position (history is oldest→newest): unshift
+      // put the newest point on the LEFT and the chart ran backwards (P0 fix)
       if (data.window_end) {
         const existing = history.value.findIndex((r) => r.window_end === data.window_end)
         if (existing >= 0) history.value.splice(existing, 1)
-        history.value.unshift({ ...data, filename: '' } as SnapshotRow)
-        history.value = history.value.slice(0, 60)
+        history.value.push({ ...data, filename: '' } as SnapshotRow)
+        history.value.sort((a, b) =>
+          (a.window_end || '').localeCompare(b.window_end || ''))
+        history.value = history.value.slice(-60)
       }
     }
   })
@@ -204,7 +210,7 @@ watch(assetId, (v, o) => {
                        :stroke-width="8" :show-text="false"
                        :color="freshness.ratio > 0.8 ? '#f4554f' : freshness.ratio > 0.5 ? '#f5b14c' : '#3ddc97'"
                        style="width:140px" />
-          <div class="muted small">{{ relativeTime(live?.window_end || card.runtime.window_end) }}</div>
+          <div class="muted small">{{ relativeTime(live?.window_end || card.runtime.window_end, rt.nowSec * 1000) }}</div>
         </div>
         <div class="strip-item">
           <div class="muted small">总体水平</div>

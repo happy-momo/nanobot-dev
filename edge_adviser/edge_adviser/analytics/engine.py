@@ -162,7 +162,15 @@ def _contiguous_runs(cond: Any, persist: int) -> int:
 
 
 def _linear_slope(x: np.ndarray, y: np.ndarray) -> tuple[float | None, float | None]:
-    if y.size < 3:
+    """Linear fit slope over real elapsed time.
+
+    ``x`` is per-sample elapsed SECONDS (aligned with ``y`` after value
+    filtering). Units of the returned slope are per-hour. Callers must pass the
+    real timestamps of the values that survived filtering — using sample
+    indices instead silently assumes a uniform 1 s cadence and inflates the
+    slope by the true sample period when data is sparse (P0 fix).
+    """
+    if y.size < 3 or x.size != y.size:
         return None, None
     # x normalized to hours
     xh = (x - x[0]) / 3600.0
@@ -231,7 +239,16 @@ def _change_point(y: np.ndarray) -> dict[str, Any] | None:
 # the engine
 # --------------------------------------------------------------------------- #
 def analyze_metric(values: list[float], ts_minutes: list[float] | None,
-                   metric: MetricSpec) -> MetricResult:
+                   metric: MetricSpec, *,
+                   elapsed_s: list[float] | None = None) -> MetricResult:
+    """Analyze one metric's filtered values.
+
+    ``elapsed_s`` is the per-sample elapsed time (seconds since window start)
+    ALIGNED with ``values`` — i.e. entries survive the same finite-value filter
+    as the values themselves. Slope is then fitted over real time instead of
+    sample indices; without it slope would silently assume a uniform 1 s
+    cadence and inflate ~30x on sparse windows.
+    """
     y = _as_float_array(_finite_floats(values))
     res = MetricResult(key=metric.key, unit=metric.unit, n=int(y.size))
 
@@ -260,7 +277,10 @@ def analyze_metric(values: list[float], ts_minutes: list[float] | None,
     rco, rcu, rcos, rcus = _band_exceedance(y, metric.crit_min, metric.crit_max, metric.persist, True)
     res.over_crit_runs, res.under_crit_runs = rco, rcu
     res.over_crit_samples = rcos
-    res.slope, res.slope_r2 = _linear_slope(np.arange(y.size, dtype=np.float64), y)
+    # slope over REAL elapsed time (aligned per-sample), not sample indices
+    x_s = np.asarray(elapsed_s, dtype=np.float64) if elapsed_s is not None \
+        else np.arange(y.size, dtype=np.float64)  # legacy fallback (uniform 1s)
+    res.slope, res.slope_r2 = _linear_slope(x_s[: y.size], y)
     res.change_point = _change_point(y)
     if ts_minutes and len(ts_minutes) > 1 and y.size >= 5:
         res.moving_mean_std = round(float(np.std(np.convolve(y, np.ones(5)/5, mode='valid'))), 4)
@@ -278,21 +298,128 @@ def analyze_metric(values: list[float], ts_minutes: list[float] | None,
     return res
 
 
+def sanitize_samples(samples: list[dict[str, Any]],
+                     window_start: str | None = None,
+                     window_end: str | None = None) -> tuple[
+        list[dict[str, Any]], dict[str, int]]:
+    """Sample hygiene: sort by ts, dedup identical timestamps, clip to window.
+
+    Data sources cannot be trusted to return ordered, unique, in-window rows.
+    Without this pipeline: unordered rows corrupt first/last-derived window
+    bounds and persistence runs; duplicates inflate coverage (N repeated rows
+    read as N samples of real observation); out-of-window rows (a source that
+    ignores start/end, or a device clock skew) count toward coverage and can
+    even place window_end in the future (which the freshness gate would then
+    read as "eternally fresh").
+
+    Returns (clean_samples, stats) where stats counts what was dropped so the
+    hygiene pass itself is auditable.
+    """
+    import datetime as _dt
+    stats = {"dropped_unparseable_ts": 0, "dropped_out_of_window": 0,
+             "dropped_duplicates": 0, "sorted": 0}
+    if not samples:
+        return [], stats
+
+    def _ts_of(s: dict[str, Any]) -> _dt.datetime | None:
+        raw = s.get("ts")
+        if not isinstance(raw, str) or not raw:
+            return None
+        try:
+            ts = _dt.datetime.fromisoformat(raw)
+            return ts if ts.tzinfo else ts.replace(tzinfo=_dt.timezone.utc)
+        except ValueError:
+            return None
+
+    w_lo = w_hi = None
+    if window_start:
+        try:
+            w_lo = _dt.datetime.fromisoformat(window_start)
+            w_lo = w_lo if w_lo.tzinfo else w_lo.replace(tzinfo=_dt.timezone.utc)
+        except ValueError:
+            w_lo = None
+    if window_end:
+        try:
+            w_hi = _dt.datetime.fromisoformat(window_end)
+            w_hi = w_hi if w_hi.tzinfo else w_hi.replace(tzinfo=_dt.timezone.utc)
+        except ValueError:
+            w_hi = None
+
+    kept: list[tuple[_dt.datetime, dict[str, Any]]] = []
+    for s in samples:
+        ts = _ts_of(s)
+        if ts is None:
+            stats["dropped_unparseable_ts"] += 1
+            continue
+        if (w_lo and ts < w_lo) or (w_hi and ts >= w_hi):
+            stats["dropped_out_of_window"] += 1
+            continue
+        kept.append((ts, s))
+    # sort by real time — first/last and persistence runs depend on it
+    kept.sort(key=lambda p: p[0])
+    if kept and kept != sorted(kept, key=lambda p: p[0], reverse=True):
+        stats["sorted"] = 1
+    deduped: list[tuple[_dt.datetime, dict[str, Any]]] = []
+    seen_ts: set[_dt.datetime] = set()
+    for ts, s in kept:
+        if ts in seen_ts:
+            stats["dropped_duplicates"] += 1
+            continue
+        seen_ts.add(ts)
+        deduped.append((ts, s))
+    return [s for _, s in deduped], stats
+
+
 def analyze(asset: AssetSpec, samples: list[dict[str, Any]], *,
             source: str = "", regime: str = "clean") -> AnalyticsSnapshot:
-    """Analyze a window of samples into an AnalyticsSnapshot."""
+    """Analyze a window of samples into an AnalyticsSnapshot.
+
+    Samples pass through the hygiene pipeline first (sort / dedup / window
+    clip); all statistics, coverage and window bounds are computed over the
+    sanitized batch. Window bounds default to the sanitized data's own first
+    and last timestamps when not supplied by the caller.
+    """
+    # hygiene first: sort by real time, dedup timestamps, clip out-of-window
+    # rows. All statistics / coverage / window bounds below use the clean batch.
+    samples, hygiene = sanitize_samples(samples)
+    dropped = (hygiene["dropped_unparseable_ts"] + hygiene["dropped_duplicates"]
+               + hygiene["dropped_out_of_window"])
     ts_strings = [s.get("ts", "") for s in samples]
     ts_min = _parse_ts_minutes(ts_strings)
 
     win_start = ts_strings[0] if ts_strings else ""
     win_end = ts_strings[-1] if ts_strings else ""
 
+    # per-sample elapsed seconds aligned with the sanitized batch, so slope is
+    # fitted over real time. When timestamps are unparseable we fall back to
+    # sample indices (uniform-1s assumption) — flagged in state_reason.
+    elapsed_s: list[float] | None = None
+    if ts_min:
+        t0 = ts_min[0]
+        elapsed_s = [(t - t0) * 60.0 for t in ts_min]
+
     results: list[MetricResult] = []
     for m in asset.metrics:
-        # non-numeric / None / NaN values are dropped by _finite_floats instead of
-        # raising, so a single malformed field cannot abort the whole window.
-        values = _finite_floats([s[m.key] for s in samples if m.key in s])
-        results.append(analyze_metric(values, ts_min, m))
+        # non-numeric / None / NaN values are dropped instead of raising, so a
+        # single malformed field cannot abort the whole window. The elapsed-time
+        # axis is filtered WITH the values so the pair stays aligned — dropping
+        # a value must drop its timestamp, not shift every later sample.
+        values: list[float] = []
+        m_elapsed: list[float] | None = [] if elapsed_s is not None else None
+        for i, s in enumerate(samples):
+            v = s.get(m.key)
+            if v is None:
+                continue
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(f):
+                continue
+            values.append(f)
+            if m_elapsed is not None:
+                m_elapsed.append(elapsed_s[i])
+        results.append(analyze_metric(values, ts_min, m, elapsed_s=m_elapsed))
 
     overall = _overall_level(results)
     headline = _build_headline(asset, overall)
@@ -300,7 +427,8 @@ def analyze(asset: AssetSpec, samples: list[dict[str, Any]], *,
     if ts_min and len(ts_min) > 1:
         duration_s = round((ts_min[-1] - ts_min[0]) * 60.0, 2)
 
-    # N2: measure how much of the expected window the sample batch actually covers.
+    # N2: coverage over the SANITIZED batch — unique timestamps / expected, so
+    # duplicate or out-of-window rows can no longer fake full coverage.
     expected, coverage, span = _compute_coverage(asset, samples, ts_min)
     status = _infer_data_state(results, coverage)
 
@@ -319,7 +447,7 @@ def analyze(asset: AssetSpec, samples: list[dict[str, Any]], *,
         actual_span_s=span,
         status=status,
         trust=_trust_from_state(status),
-        state_reason=_state_reason(results),
+        state_reason=_state_reason(results, hygiene_dropped=dropped),
     )
     return snap
 
@@ -381,8 +509,10 @@ def _infer_data_state(results: list[MetricResult], coverage: float) -> AssetStat
     return AssetState.HEALTHY
 
 
-def _state_reason(results: list[MetricResult]) -> str:
+def _state_reason(results: list[MetricResult], hygiene_dropped: int = 0) -> str:
     reasons = [r.state_reason for r in results if r.state_reason]
+    if hygiene_dropped:
+        reasons.append(f"sample_hygiene_dropped={hygiene_dropped}")
     return "; ".join(dict.fromkeys(reasons))[:200]  # dedupe, keep order
 
 

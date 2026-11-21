@@ -50,9 +50,9 @@ onMounted(() => {
       <!-- KPI strip -->
       <div class="kpi-strip">
         <KpiCard label="设备总数" :value="kpi.total" sub="在册受控资产" />
-        <KpiCard label="正常" :value="kpi.healthy" tone="#3ddc97" sub="healthy" />
-        <KpiCard label="警告" :value="kpi.warn" tone="#f5b14c" sub="warn" />
-        <KpiCard label="严重" :value="kpi.critical" tone="#f4554f" sub="critical" />
+        <KpiCard label="正常" :value="kpi.healthy" tone="#3ddc97" sub="数据可信" />
+        <KpiCard label="警告" :value="kpi.warn" tone="#f5b14c" sub="告警级别" />
+        <KpiCard label="严重" :value="kpi.critical" tone="#f4554f" sub="告警级别" />
         <KpiCard label="数据劣化" :value="kpi.degraded" tone="#a07cf0" sub="断连/过时/无数据" />
         <KpiCard label="未确认告警" :value="kpi.unackedAlerts" tone="#f4554f" sub="待人工确认" />
         <KpiCard label="平均覆盖率" :value="Math.round(kpi.avgCoverage * 100) + '%'" sub="全场数据完整度" />
@@ -101,7 +101,7 @@ onMounted(() => {
               background: levelMeta[c.runtime.overall_level]?.bg }">
               {{ levelMeta[c.runtime.overall_level]?.label || c.runtime.overall_level }}
             </span>
-            <span class="muted small">{{ relativeTime(c.runtime.window_end) }}</span>
+            <span class="muted small">{{ relativeTime(c.runtime.window_end, rt.nowSec * 1000) }}</span>
           </div>
           <div v-if="c.runtime.state_reason || (c.runtime.state !== 'healthy' && c.runtime.headline)"
                class="reason small"

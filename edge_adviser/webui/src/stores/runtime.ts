@@ -91,7 +91,7 @@ export interface AlertRec {
   window_end: string
   ts: number
   acked: boolean
-  acked_at?: string | null
+  acked_at?: string | number | null  // epoch SECONDS (backend) — formatTs handles both
   dedup_key: string
 }
 
@@ -134,6 +134,12 @@ interface RT {
   _closers: Array<() => void>
   _streamStatus: Record<string, SSEStatus>
   loadError: string
+  /** reactive wall clock (seconds) — bumped every second so relative ages
+   * ("42 秒前") advance without waiting for an SSE event */
+  nowSec: number
+  _clockTimer: number
+  /** one-shot flag so both streams opening doesn't double-resync */
+  _resyncDirty: boolean
 }
 
 export const useRuntime = defineStore('runtime', {
@@ -152,6 +158,9 @@ export const useRuntime = defineStore('runtime', {
     _closers: [],
     _streamStatus: {},
     loadError: '',
+    nowSec: Math.floor(Date.now() / 1000),
+    _clockTimer: 0,
+    _resyncDirty: false,
   }),
   getters: {
     assets: (s) => s.overviewCards,
@@ -164,16 +173,23 @@ export const useRuntime = defineStore('runtime', {
     unackedAlerts: (s) => s.alerts.filter((a) => !a.acked),
     fleetKpi: (s): FleetKpi => {
       const cards = s.overviewCards
-      const by = (st: string) => cards.filter((c) => c.runtime.state === st).length
+      // warn/critical are ALARM levels (overall_level), not machine states —
+      // AssetState has no 'warn'/'critical' members, so counting by state made
+      // these KPIs permanently zero while real alarms burned (P0 fix).
+      const byLevel = (lv: string) =>
+        cards.filter((c) => (c.runtime.overall_level || '') === lv).length
+      const byState = (st: string) =>
+        cards.filter((c) => (c.runtime.state || '') === st).length
       const cov = cards.length
         ? cards.reduce((acc, c) => acc + (c.runtime.coverage || 0), 0) / cards.length
         : 0
       return {
         total: cards.length,
-        healthy: by('healthy'),
-        warn: by('warn'),
-        critical: by('critical'),
-        degraded: by('offline') + by('stale') + by('unknown'),
+        healthy: byState('healthy') + byState('partial'),
+        warn: byLevel('warn'),
+        critical: byLevel('critical'),
+        degraded: byState('offline') + byState('stale') + byState('unknown') +
+          byState('insufficient'),
         unackedAlerts: s.alerts.filter((a) => !a.acked).length,
         avgCoverage: cov,
       }
@@ -278,15 +294,35 @@ export const useRuntime = defineStore('runtime', {
       this.stopStreams()
       const stamp = () => { this.lastEventAt = Date.now() }
 
+      // reactive wall clock: relative ages must advance on their own, not only
+      // when an SSE event happens to trigger a re-render (P0 fix #38)
+      this.nowSec = Math.floor(Date.now() / 1000)
+      this._clockTimer = window.setInterval(() => {
+        this.nowSec = Math.floor(Date.now() / 1000)
+      }, 1000)
+
       // Each stream reports its own health into _streamStatus; `conn` is the
       // aggregate. Writing it directly from two callbacks made the indicator
       // flap (one stream open + one reconnecting → status flipped on each event).
+      // A stream that (re)opens after a drop triggers a full resync — the server
+      // replay cache may have been reset (restart), so anything that changed
+      // while we were disconnected would otherwise drift forever.
       const setStatus = (name: string, st: SSEStatus) => {
         this._streamStatus[name] = st
         const states = Object.values(this._streamStatus)
         if (states.includes('open')) this.conn = 'online'
         else if (states.includes('connecting')) this.conn = 'connecting'
         else this.conn = 'reconnecting'
+        if (st === 'open') {
+          // one shared resync per tick; both streams open on startup
+          const dirty = (this._resyncDirty = true)
+          window.setTimeout(() => {
+            if (!this._resyncDirty || !dirty) return
+            this._resyncDirty = false
+            this.loadOverview(true).catch(() => { /* next reconnect retries */ })
+            this.loadAlerts().catch(() => { /* next reconnect retries */ })
+          }, 500)
+        }
       }
 
       const closeTel = connectSSE('/stream/telemetry', (kind, data) => {
@@ -302,6 +338,24 @@ export const useRuntime = defineStore('runtime', {
             card.runtime.window_end = data.window_end
             card.runtime.sample_count = data.sample_count
             card.runtime.headline = data.headline
+            // keep the card's numbers alive too: latest metric values, trend
+            // thumbnail and per-asset alert badge otherwise freeze at page-load
+            // values even while the timestamp says "刚刚" (P0 fix #37)
+            if (Array.isArray(data.metrics) && data.metrics.length) {
+              const lv: Record<string, number | null> = {}
+              for (const m of data.metrics) lv[m.key] = m.max ?? m.mean ?? null
+              card.runtime.latest_values = lv
+              // append to the sparkline series (dedup by window_end)
+              const series = card.runtime.series || []
+              const first = data.metrics[0]
+              const pt = { window_end: data.window_end,
+                value: first.max ?? first.mean ?? null,
+                level: first.level || 'info' }
+              const i = series.findIndex((p) => p.window_end === pt.window_end)
+              if (i >= 0) series.splice(i, 1)
+              series.push(pt)
+              card.runtime.series = series.slice(-8)
+            }
           }
         }
       }, (st: SSEStatus) => setStatus('telemetry', st))
@@ -313,7 +367,11 @@ export const useRuntime = defineStore('runtime', {
           const exists = this.alerts.some(
             (a) => a.dedup_key === data.dedup_key && !a.acked && a.asset_id === data.asset_id,
           )
-          if (!exists) this.alerts.unshift(data)
+          if (!exists) {
+            this.alerts.unshift(data)
+            const card = this.assetById(data.asset_id)
+            if (card) card.runtime.alerts = (card.runtime.alerts || 0) + 1
+          }
         }
       }, (st: SSEStatus) => setStatus('alerts', st))
 
@@ -324,6 +382,11 @@ export const useRuntime = defineStore('runtime', {
         try { c() } catch { /* already closed */ }
       }
       this._closers = []
+      if (this._clockTimer) {
+        window.clearInterval(this._clockTimer)
+        this._clockTimer = 0
+      }
+      this._streamStatus = {}
     },
     async loadHistory(assetId: string, limit = 40, includeMetrics = true) {
       const d = await api.get<SnapshotRow[]>(
@@ -336,7 +399,10 @@ export const useRuntime = defineStore('runtime', {
       const a = this.alerts.find((x) => x.asset_id === asset_id && x.ts === ts)
       if (a) {
         a.acked = true
-        a.acked_at = new Date().toISOString()
+        // epoch SECONDS to match the backend's persisted acked_at (alerts.py
+        // writes time.time()); an ISO string here made the acked-sort compare
+        // 1.7e3 against 1.7e9 (P1 fix)
+        a.acked_at = Math.floor(Date.now() / 1000)
       }
     },
     async sendFeedback(asset_id: string, note: string) {

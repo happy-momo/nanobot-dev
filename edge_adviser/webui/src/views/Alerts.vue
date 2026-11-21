@@ -5,7 +5,7 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRuntime, type AlertRec } from '../stores/runtime'
-import { formatTs, relativeTime, levelMeta, metaOf } from '../theme'
+import { formatTs, relativeTime, levelMeta, metaOf, toEpochMs } from '../theme'
 import StateBadge from '../components/StateBadge.vue'
 import PageHeader from '../components/PageHeader.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -36,7 +36,7 @@ const acked = computed(() =>
     .filter((a) => a.acked)
     .filter((a) => (!fAsset.value || a.asset_id === fAsset.value))
     .filter((a) => (!fSeverity.value || (a.subject || a.state) === fSeverity.value))
-    .sort((a, b) => (b.acked_at ? +new Date(b.acked_at) : b.ts) - (a.acked_at ? +new Date(a.acked_at) : a.ts)))
+    .sort((a, b) => (toEpochMs(b.acked_at) ?? b.ts * 1000) - (toEpochMs(a.acked_at) ?? a.ts * 1000)))
 
 const counts = computed(() => ({
   warn: rt.unackedAlerts.filter((a) => a.subject === 'warn' || a.overall_level === 'warn').length,

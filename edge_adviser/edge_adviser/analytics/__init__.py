@@ -4,7 +4,8 @@ from .engine import (
     analyze,
     analyze_metric,
     empty_snapshot,
+    sanitize_samples,
 )
 
 __all__ = ["AnalyticsSnapshot", "MetricResult", "analyze", "analyze_metric",
-           "empty_snapshot"]
+           "empty_snapshot", "sanitize_samples"]

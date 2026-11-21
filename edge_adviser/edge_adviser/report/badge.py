@@ -26,9 +26,9 @@ def build_badge(
     """Build a MetaData badge from a snapshot dict, tolerating missing keys."""
     state = snapshot.get("status")
     try:
-        st = AssetState(state) if state else AssetState.HEALTHY
+        st = AssetState(state) if state else AssetState.UNKNOWN
     except ValueError:
-        st = AssetState.HEALTHY
+        st = AssetState.UNKNOWN  # fail closed: unrecognized status ≠ healthy
     return MetaData(
         asset_id=str(snapshot.get("asset_id", "")),
         status=st,

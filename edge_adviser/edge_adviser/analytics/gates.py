@@ -44,7 +44,10 @@ def _safe_iso(s: Any) -> str:
 def snapshot_age_s(snapshot: dict[str, Any], now: datetime | None = None) -> float:
     """Age in seconds of a snapshot's window_end vs ``now``.
 
-    Returns inf when the window_end is absent/unparseable so it is treated as stale.
+    Returns inf when the window_end is absent/unparseable so it is treated as
+    stale. A FUTURE window_end (clock-skewed device, out-of-window samples) is
+    also inf: clamping a negative age to 0 would let a bad snapshot read as
+    "eternally fresh" and bypass the freshness gate entirely (P0 fix).
     """
     end = _safe_iso(snapshot.get("window_end"))
     if not end:
@@ -54,7 +57,10 @@ def snapshot_age_s(snapshot: dict[str, Any], now: datetime | None = None) -> flo
         ts = datetime.fromisoformat(end)
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        return max(0.0, (now - ts).total_seconds())
+        age = (now - ts).total_seconds()
+        if age < 0:
+            return float("inf")  # future-dated: cannot be trusted as fresh
+        return age
     except ValueError:
         return float("inf")
 
@@ -108,12 +114,14 @@ def classify_snapshot_state(
         return AssetState.INSUFFICIENT
     if snapshot_age_s(snap, now) > config.data_freshness_s:
         return AssetState.STALE
-    # else trust the data-state already computed into the snapshot
+    # else trust the data-state already computed into the snapshot — but a
+    # missing or unrecognizable status must FAIL CLOSED (unknown), never be
+    # promoted to healthy.
     state = snap.get("status")
     try:
-        return AssetState(state) if state else AssetState.HEALTHY
+        return AssetState(state) if state else AssetState.UNKNOWN
     except ValueError:
-        return AssetState.HEALTHY
+        return AssetState.UNKNOWN
 
 
 def trust_from_state(state: AssetState) -> TrustLevel:
@@ -158,7 +166,7 @@ def gate_snapshot_for_read(
         return GateResult(False, snap, AssetState.STALE, "stale")
     state = snap.get("status")
     try:
-        st = AssetState(state) if state else AssetState.HEALTHY
+        st = AssetState(state) if state else AssetState.UNKNOWN
     except ValueError:
-        st = AssetState.HEALTHY
+        st = AssetState.UNKNOWN  # fail closed: unrecognized status ≠ healthy
     return GateResult(True, snap, st, "")

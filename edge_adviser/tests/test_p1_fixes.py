@@ -234,9 +234,13 @@ async def test_scheduler_loop_publishes_failed_snapshots(tmp_path: Path) -> None
 @pytest.mark.asyncio
 async def test_deep_report_provider_failure_not_archived(tmp_path: Path) -> None:
     sup, asset, store, config = _sup(tmp_path)
-    # seed a fresh trusted snapshot so the read gate passes
+    # seed a fresh trusted snapshot so the read gate passes (now-relative so the
+    # test does not rot as wall-clock advances)
+    from datetime import datetime, timedelta, timezone as _tz
+    fresh_end = (datetime.now(_tz.utc) - timedelta(seconds=30)).isoformat(
+        timespec="seconds")
     store.save_snapshot(asset.asset_id, {
-        "asset_id": "pump1", "window_end": "2026-11-19T10:00:00+00:00",
+        "asset_id": "pump1", "window_end": fresh_end,
         "status": "healthy", "overall_level": "info", "sample_count": 10,
         "coverage": 1.0, "metrics": [],
     })

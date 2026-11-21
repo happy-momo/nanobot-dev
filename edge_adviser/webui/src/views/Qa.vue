@@ -54,6 +54,11 @@ async function send(q?: string) {
     else { ElMessage.warning('尚无可用设备'); return }
   }
   const id = assetId.value
+  // capture trust AT ANSWER TIME — the badge must describe the data the answer
+  // was built from, not whatever the live snapshot says later (switching assets
+  // or a telemetry improvement would otherwise rewrite history, P0 fix)
+  const trustAtAnswer = rt.liveFor(id)?.trust
+    || rt.assetById(id)?.runtime.trust || 'none'
   if (!threads.value[id]) threads.value[id] = []
   threads.value[id].push({ role: 'user', text: question, ts: Date.now() })
   if (q === undefined) input.value = ''
@@ -62,7 +67,11 @@ async function send(q?: string) {
   try {
     const r = await api.post<any>(`/api/assets/${id}/ask`, { question })
     if (r && r.content) {
-      threads.value[id].push({ role: 'assistant', text: r.content, meta: r, ts: Date.now() })
+      threads.value[id].push({
+        role: 'assistant', text: r.content,
+        meta: { ...r, trust: (r.trust as string) || trustAtAnswer },
+        ts: Date.now(),
+      })
     } else if (r && r.error) {
       threads.value[id].push({
         role: 'assistant', text: r.error, kind: 'refused', ts: Date.now(),
@@ -146,7 +155,7 @@ function onEnter(e: KeyboardEvent) {
           <div v-else class="text">{{ m.text }}</div>
 
           <div v-if="m.meta && !isRefused(m) && !isError(m)" class="meta-row muted">
-            <TrustBadge :trust="trustNow" />
+            <TrustBadge :trust="m.meta.trust || trustNow" />
             <span>⚙ provider={{ m.meta.used_provider || '—' }}</span>
             <el-tag :type="m.meta.degraded ? 'warning' : 'success'" size="small">
               {{ m.meta.degraded ? '已降级' : '本地/原模型' }}
