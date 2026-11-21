@@ -6,10 +6,12 @@ coverage) as-is. They do NOT call the model.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi import Request
+from pydantic import BaseModel
 
 from ..analytics.gates import gate_snapshot_for_read
 from .deps import AppState
@@ -168,3 +170,114 @@ async def asset_metadata(request: Request, asset_id: str) -> Any:
         spec = state.config.asset(asset_id).metric(m["key"])
         metrics.append({"metric": m, "spec": metric_to_dict(spec) if spec else None})
     return ok(data={"ok": True, "metrics": metrics})
+
+
+# --------------------------------------------------------------------------- #
+# threshold editing — the highest-frequency field change, previously requiring
+# SSH + JSON edit + restart. Writes are validated, atomic, and audited.
+# --------------------------------------------------------------------------- #
+class ThresholdIn(BaseModel):
+    warn_min: float | None = None
+    warn_max: float | None = None
+    crit_min: float | None = None
+    crit_max: float | None = None
+
+
+def _find_config_file(state: AppState) -> Path | None:
+    """Locate the JSON config this state was built from (defaults._source_file)."""
+    src = state.config.defaults.get("_source_file")
+    if src and Path(src).exists():
+        return Path(src)
+    return None
+
+
+@router.patch("/assets/{asset_id}/metrics/{key}/thresholds")
+async def patch_thresholds(request: Request, asset_id: str, key: str,
+                           body: ThresholdIn) -> Any:
+    """Update one metric's alarm bands; persists to the config JSON atomically.
+
+    Validation: values must be finite, warn band inside crit band, and both
+    sides of each band ordered — a bad band would silently disable alarming or
+    flip the chart zones. The edit lands in runlog (what changed, from → to) so
+    a midnight threshold tweak is attributable.
+    """
+    import math
+    import json as _json
+    import time as _time
+    state: AppState = await _state(request)
+    asset = state.config.asset(asset_id)
+    if asset is None:
+        return fail("unknown asset")
+    metric = asset.metric(key)
+    if metric is None:
+        return fail(f"unknown metric: {key}")
+
+    vals = {"warn_min": body.warn_min, "warn_max": body.warn_max,
+            "crit_min": body.crit_min, "crit_max": body.crit_max}
+    for name, v in vals.items():
+        if v is not None and not math.isfinite(v):
+            return fail(f"{name} must be a finite number")
+
+    # validate ordering against the merged (new) band set
+    merged = {
+        "warn_min": vals["warn_min"] if vals["warn_min"] is not None else metric.warn_min,
+        "warn_max": vals["warn_max"] if vals["warn_max"] is not None else metric.warn_max,
+        "crit_min": vals["crit_min"] if vals["crit_min"] is not None else metric.crit_min,
+        "crit_max": vals["crit_max"] if vals["crit_max"] is not None else metric.crit_max,
+    }
+    if merged["warn_min"] is not None and merged["warn_max"] is not None \
+            and merged["warn_min"] > merged["warn_max"]:
+        return fail("warn_min must be <= warn_max")
+    if merged["crit_min"] is not None and merged["crit_max"] is not None \
+            and merged["crit_min"] > merged["crit_max"]:
+        return fail("crit_min must be <= crit_max")
+    if merged["warn_max"] is not None and merged["crit_min"] is not None \
+            and merged["crit_min"] < merged["warn_max"]:
+        return fail("crit_min must be >= warn_max (crit band above warn band)")
+
+    cfg_path = _find_config_file(state)
+    if cfg_path is None:
+        return fail("config file not found; threshold editing unavailable "
+                    "(config loaded from memory or demo)")
+
+    started = _time.time()
+    raw = _json.loads(cfg_path.read_text(encoding="utf-8"))
+    assets = raw.get("assets", [])
+    target = next((a for a in assets if a.get("asset_id") == asset_id), None)
+    if target is None:
+        return fail("asset not found in config file")
+    metrics = target.get("metrics", [])
+    mrec = next((m for m in metrics if m.get("key") == key), None)
+    if mrec is None:
+        return fail("metric not found in config file")
+
+    changes: dict[str, list[Any]] = {}
+    for name, v in vals.items():
+        if v is None:
+            continue
+        old = mrec.get(name)
+        if old == v:
+            continue
+        changes[name] = [old, v]
+        mrec[name] = v
+
+    if not changes:
+        return ok(data={"changed": {}, "metric": metric_to_dict(metric)})
+
+    # atomic write: tmp + os.replace — a crash mid-write must not lose the config
+    tmp = cfg_path.with_suffix(".json.tmp")
+    tmp.write_text(_json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    import os
+    os.replace(tmp, cfg_path)
+
+    # apply to the in-memory spec so the running process picks it up immediately
+    for name, v in vals.items():
+        if v is not None:
+            setattr(metric, name, v)
+
+    from ..core.runlog import log_run_event
+    log_run_event(state.store, asset_id, "threshold_edit", "ok", actor="hmi",
+                  reason=f"{key}: " + ", ".join(
+                      f"{k} {old}->{new}" for k, (old, new) in changes.items())[:200],
+                  elapsed_s=round(_time.time() - started, 3))
+    return ok(data={"changed": changes, "metric": metric_to_dict(metric)})

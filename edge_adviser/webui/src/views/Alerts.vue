@@ -2,8 +2,9 @@
 // Alert center: filterable (asset / severity / ack state) list with per-row
 // acknowledge + feedback. Rows key on asset+ts; severity color bar comes from
 // overall_level via levelMeta.
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { api } from '../api/http'
 import { useRuntime, type AlertRec } from '../stores/runtime'
 import { formatTs, relativeTime, levelMeta, metaOf, toEpochMs } from '../theme'
 import StateBadge from '../components/StateBadge.vue'
@@ -12,10 +13,14 @@ import EmptyState from '../components/EmptyState.vue'
 
 const rt = useRuntime()
 
-const fAsset = ref('')
-const fSeverity = ref('')
-const showAcked = ref(false)
+// filters persist across refresh/shift-handover (localStorage)
+const fAsset = ref(localStorage.getItem('ea_alert_asset') || '')
+const fSeverity = ref(localStorage.getItem('ea_alert_sev') || '')
+const showAcked = ref(localStorage.getItem('ea_alert_acked') === '1')
 const acking = ref<number | null>(null)
+watch(fAsset, (v) => localStorage.setItem('ea_alert_asset', v || ''))
+watch(fSeverity, (v) => localStorage.setItem('ea_alert_sev', v || ''))
+watch(showAcked, (v) => localStorage.setItem('ea_alert_acked', v ? '1' : '0'))
 
 const severities = [
   { value: 'warn', label: '警告' },
@@ -49,14 +54,63 @@ function keyOf(a: AlertRec) {
   return `${a.asset_id}:${a.ts}`
 }
 
-async function ack(a: AlertRec) {
-  acking.value = a.ts
+// ---- ack workflow: single (with note) + bulk (per-asset / fleet) --------- //
+const ackDialog = ref(false)
+const ackNote = ref('')
+const ackTarget = ref<AlertRec | null>(null)   // single-ack target
+const bulkMode = ref<'one' | 'asset' | 'fleet'>('one')
+const ackBusy = ref(false)
+
+function askAck(a: AlertRec) {
+  ackTarget.value = a
+  bulkMode.value = 'one'
+  ackNote.value = ''
+  ackDialog.value = true
+}
+
+function askAckAsset() {
+  if (!active.value.length) { ElMessage.info('当前无活动告警'); return }
+  bulkMode.value = 'asset'
+  ackTarget.value = null
+  ackNote.value = ''
+  ackDialog.value = true
+}
+
+function askAckFleet() {
+  if (!rt.unackedAlerts.length) { ElMessage.info('当前无活动告警'); return }
+  bulkMode.value = 'fleet'
+  ackTarget.value = null
+  ackNote.value = ''
+  ackDialog.value = true
+}
+
+async function confirmAck() {
+  ackBusy.value = true
   try {
-    await rt.acknowledge(a.asset_id, a.ts)
-    ElMessage.success('已确认')
+    const note = ackNote.value.trim()
+    if (bulkMode.value === 'one' && ackTarget.value) {
+      const a = ackTarget.value
+      acking.value = a.ts
+      await rt.acknowledge(a.asset_id, a.ts, note)
+      ElMessage.success(note ? '已确认，处理记录已进入学习闭环' : '已确认')
+    } else if (bulkMode.value === 'asset') {
+      const id = fAsset.value || active.value[0]?.asset_id
+      if (!id) { ElMessage.warning('请先选择设备'); return }
+      const r = await api.post<any>(`/api/assets/${id}/alerts/ack-all`,
+                                    { subject: fSeverity.value || null, note })
+      ElMessage.success(`已批量确认 ${r?.acked ?? 0} 条`)
+      await rt.loadAlerts()
+    } else {
+      const r = await api.post<any>('/api/alerts/ack-all',
+                                    { subject: fSeverity.value || null, note })
+      ElMessage.success(`全场已批量确认 ${r?.acked ?? 0} 条`)
+      await rt.loadAlerts()
+    }
+    ackDialog.value = false
   } catch (e: any) {
     ElMessage.error(e?.message || '确认失败')
   } finally {
+    ackBusy.value = false
     acking.value = null
   }
 }
@@ -83,6 +137,12 @@ function severityLabel(a: AlertRec) {
         <el-option v-for="s in severities" :key="s.value" :value="s.value" :label="s.label" />
       </el-select>
       <el-switch v-model="showAcked" active-text="已确认" />
+      <el-button size="small" :disabled="!active.length" @click="askAckAsset">
+        批量确认本页
+      </el-button>
+      <el-button size="small" type="warning" :disabled="!rt.unackedAlerts.length" @click="askAckFleet">
+        全场确认
+      </el-button>
     </PageHeader>
 
     <!-- severity count chips -->
@@ -117,7 +177,7 @@ function severityLabel(a: AlertRec) {
             <div class="kv"><span class="muted small">窗口</span><span class="mono">{{ formatTs(a.window_end) }}</span></div>
             <div class="kv"><span class="muted small">触发时间</span><span class="mono">{{ formatTs(a.ts) }}</span></div>
             <div class="actions">
-              <el-button size="small" type="primary" :loading="acking === a.ts" @click="ack(a)">
+              <el-button size="small" type="primary" :loading="acking === a.ts" @click="askAck(a)">
                 确认 (ACK)
               </el-button>
             </div>
@@ -140,6 +200,33 @@ function severityLabel(a: AlertRec) {
         </div>
       </template>
     </div>
+
+    <!-- ack dialog: single or bulk, with an optional handling note. The note is
+         persisted on the alert AND echoed into the learn loop's feedback —
+         "how it was handled" becomes maintenance knowledge instead of evaporating. -->
+    <el-dialog v-model="ackDialog"
+               :title="bulkMode === 'one' ? '确认告警'
+                 : bulkMode === 'asset' ? '批量确认（当前筛选）' : '全场批量确认'"
+               width="440px">
+      <div v-if="bulkMode === 'one' && ackTarget" class="ack-preview muted small">
+        {{ ackTarget.asset_id }} · {{ severityLabel(ackTarget) }} ·
+        {{ ackTarget.headline || ackTarget.reason }}
+      </div>
+      <div v-else class="ack-preview muted small">
+        {{ bulkMode === 'asset'
+          ? `将确认${fAsset ? '设备 ' + fAsset : '首个设备'}${fSeverity ? '的 ' + fSeverity + ' 级' : '全部'}活动告警`
+          : '将确认所有设备的活动告警' }}
+        <template v-if="fSeverity">（{{ fSeverity }}）</template>
+      </div>
+      <el-input v-model="ackNote" type="textarea" :rows="3" maxlength="2000"
+                placeholder="处理方式（可选，将进入学习闭环）。例如：已更换联轴器，振动恢复正常" />
+      <template #footer>
+        <el-button size="small" @click="ackDialog = false">取消</el-button>
+        <el-button size="small" type="primary" :loading="ackBusy" @click="confirmAck">
+          {{ bulkMode === 'one' ? '确认' : '批量确认' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -162,4 +249,5 @@ function severityLabel(a: AlertRec) {
 .actions { margin-top: 6px; }
 .ack-title { margin: 14px 0 6px; font-size: 13px; }
 .acked-row { border-left-color: var(--ea-border); opacity: 0.75; }
+.ack-preview { margin-bottom: 10px; line-height: 1.5; }
 </style>

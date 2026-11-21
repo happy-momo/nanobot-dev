@@ -7,7 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   DataBoard, Monitor as MonitorIcon, Bell, Document, ChatDotRound, Reading,
-  Comment, Setting as SettingIcon, Tickets, Tools, Expand,
+  Comment, Setting as SettingIcon, Tickets, Tools, Expand, Cpu,
 } from '@element-plus/icons-vue'
 import { useRuntime } from './stores/runtime'
 import { api, setToken, setUnauthorizedHandler } from './api/http'
@@ -38,6 +38,7 @@ window.addEventListener('resize', onResize)
 
 const nav = computed(() => [
   { to: '/', label: '总览', key: 'dashboard', basic: true, icon: DataBoard },
+  { to: '/asset-hub', label: '设备中心', key: 'asset-hub', basic: true, icon: Cpu },
   { to: '/monitor', label: '实时监控', key: 'monitor', basic: true, icon: MonitorIcon },
   { to: '/alerts', label: '告警中心', key: 'alerts', basic: true, icon: Bell, badge: rt.overallAlertCount },
   { to: '/reports', label: '深度报告', key: 'reports', opOnly: true, icon: Document },
@@ -85,11 +86,27 @@ setUnauthorizedHandler(async () => {
 onMounted(async () => {
   await rt.bootstrap(() => askPin())
   await rt.loadOverview(true)  // with sparkline series
+  // an industrial tablet sleeping for hours wakes with a "connected" shell and
+  // frozen data: on re-visibility, resync server truth once (SSE may have died
+  // silently in the background)
+  document.addEventListener('visibilitychange', onVisibility)
 })
+
+function onVisibility() {
+  if (document.visibilityState === 'visible' && rt.ready) {
+    const staleMs = Date.now() - rt.lastEventAt
+    // nothing received in 60s (or never) → full resync; SSE auto-reconnects
+    if (!rt.lastEventAt || staleMs > 60_000) {
+      rt.loadOverview(true).catch(() => { /* retry on next visibility */ })
+      rt.loadAlerts().catch(() => { /* retry on next visibility */ })
+    }
+  }
+}
 
 onBeforeUnmount(() => {
   rt.stopStreams()
   window.removeEventListener('resize', onResize)
+  document.removeEventListener('visibilitychange', onVisibility)
 })
 
 // new unacked alerts → notification (severity-following), click jumps to Alerts

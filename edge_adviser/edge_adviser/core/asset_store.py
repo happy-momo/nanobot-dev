@@ -241,6 +241,11 @@ class AssetStore:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def read_runlog(self, asset_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        """Newest-last audit rows (bounded by retention); ``limit=0`` = all rows.
+
+        Retention already caps the file (max_runlog_rows), so limit=0 reads a
+        bounded file — used by the CSV export and cursor pagination.
+        """
         p = self.runlog_path(asset_id)
         if not p.exists():
             return []
@@ -253,7 +258,7 @@ class AssetStore:
                         out.append(json.loads(line))
                     except json.JSONDecodeError:
                         continue
-        return out[-limit:]
+        return out[-limit:] if limit > 0 else out
 
 
 def create_asset_memory_store(asset: AssetSpec, workspace: Path) -> NanobotMemoryStore:

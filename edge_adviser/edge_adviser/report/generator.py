@@ -81,6 +81,11 @@ class ReportGenerator:
         kb = builder.build_knowledge_block(asset.asset_id, query=str(snapshot.get("headline", "")))
         if kb:
             blocks.append(kb)
+        # disclose superseded knowledge so the narrative doesn't repeat facts
+        # the conflict ledger has already flagged as contradicted
+        cb = builder.build_conflict_block(asset.asset_id)
+        if cb:
+            blocks.append(cb)
 
         badge_md = render_frontmatter(build_badge(snapshot))
         prompt = _REPORT_PROMPT.format(

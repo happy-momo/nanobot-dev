@@ -113,6 +113,30 @@ class ContextBuilder:
             return None
         return _block("previous-report", f"Last report conclusion:\n{conclusion}")
 
+    def build_conflict_block(self, asset_id: str) -> RuntimeContextBlock | None:
+        """Known superseded/contradicted knowledge, disclosed to the model.
+
+        Without this the QA/report prompts happily cite a fact the system has
+        already flagged as contradicted — the conflict ledger was recorded but
+        never reached the prompt (dead code). Wiring it through means the model
+        can caveat or avoid superseded conclusions instead of repeating them.
+        """
+        from ..core.memory_service import build_conflict_block, MemoryService
+        asset = self.config.asset(asset_id)
+        if asset is None or self.config.memory_conflict_policy == "off":
+            return None
+        try:
+            svc = MemoryService(asset, self.config.workspace,
+                                index=self.config.memory_index,
+                                conflict_policy=self.config.memory_conflict_policy,
+                                decay_s=self.config.memory_decay_s)
+            text = build_conflict_block(svc)
+        except Exception:  # noqa: BLE001 — a broken ledger must not break QA
+            return None
+        if not text:
+            return None
+        return _block(f"conflicts:{asset_id}", text)
+
     # -- the provider hook: read RequestContext.attributes for routing --
     async def provide(self, request: RequestContext) -> RuntimeContextBlock | None:
         attrs = request.attributes or {}
@@ -139,6 +163,9 @@ class ContextBuilder:
         pc = self.build_prev_conclusion_block(asset_id)
         if pc:
             blocks.append(pc)
+        cb = self.build_conflict_block(asset_id)
+        if cb:
+            blocks.append(cb)
         if not blocks:
             return None
         return blocks[0] if len(blocks) == 1 else blocks

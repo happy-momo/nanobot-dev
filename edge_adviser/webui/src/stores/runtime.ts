@@ -394,8 +394,8 @@ export const useRuntime = defineStore('runtime', {
       this.history[assetId] = d || []
       return this.history[assetId]
     },
-    async acknowledge(asset_id: string, ts: number) {
-      await api.post(`/api/assets/${asset_id}/alerts/${ts}/ack`)
+    async acknowledge(asset_id: string, ts: number, note = '') {
+      await api.post(`/api/assets/${asset_id}/alerts/${ts}/ack`, { ts, note })
       const a = this.alerts.find((x) => x.asset_id === asset_id && x.ts === ts)
       if (a) {
         a.acked = true
@@ -403,6 +403,7 @@ export const useRuntime = defineStore('runtime', {
         // writes time.time()); an ISO string here made the acked-sort compare
         // 1.7e3 against 1.7e9 (P1 fix)
         a.acked_at = Math.floor(Date.now() / 1000)
+        if (note) (a as any).ack_note = note
       }
     },
     async sendFeedback(asset_id: string, note: string) {

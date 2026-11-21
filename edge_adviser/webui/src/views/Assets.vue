@@ -1,13 +1,13 @@
 <script setup lang="ts">
 // Asset registry: left list + right detail. Live state/trust come from the
 // store's live records (not the static card); each metric gets a MetricBand
-// visualization with the current value marker; source kind + downtime windows
-// surfaced. (Editing spans config+ASSET.md regeneration — out of read-side scope.)
-import { ref, computed, onMounted, watch } from 'vue'
+// visualization with the current value marker; thresholds are editable inline
+// (PATCH /metrics/{key}/thresholds — validated, atomic, audited server-side).
+import { ref, computed, onMounted, watch, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/http'
-import { useRuntime } from '../stores/runtime'
-import { fmtNum } from '../theme'
+import { useRuntime, type MetricSpec } from '../stores/runtime'
+import { fmtNum, formatTs } from '../theme'
 import StateBadge from '../components/StateBadge.vue'
 import TrustBadge from '../components/TrustBadge.vue'
 import MetricBand from '../components/MetricBand.vue'
@@ -18,6 +18,8 @@ const selectedId = ref('')
 const detail = ref<any>(null)
 const loading = ref(false)
 const cache = ref<Record<string, any>>({})
+// request-sequence guard against the A→B switch race
+let seq = 0
 
 const cards = computed(() => rt.overviewCards)
 const selected = computed(() => rt.assetById(selectedId.value))
@@ -25,22 +27,26 @@ const liveState = computed(() => rt.liveFor(selectedId.value)?.status || selecte
 const liveTrust = computed(() => rt.liveFor(selectedId.value)?.trust || selected.value?.runtime.trust)
 
 // metric specs (detail payload preferred; falls back to the card's config)
-const specs = computed(() => detail.value?.metrics || selected.value?.config?.metrics || [])
+const specs = computed<MetricSpec[]>(() =>
+  detail.value?.metrics || selected.value?.config?.metrics || [])
 const sourceKind = computed(() => detail.value?.source_kind)
 
 async function select(id: string) {
   selectedId.value = id
   if (cache.value[id]) { detail.value = cache.value[id]; return }
+  const mySeq = ++seq
   loading.value = true
   try {
     const d = await api.get<any>(`/api/assets/${id}`)
+    if (mySeq !== seq) return
     detail.value = d
     cache.value[id] = d
   } catch (e: any) {
+    if (mySeq !== seq) return
     ElMessage.error(e?.message || '资产详情加载失败')
     detail.value = null
   } finally {
-    loading.value = false
+    if (mySeq === seq) loading.value = false
   }
 }
 
@@ -52,6 +58,52 @@ function currentValue(key: string): number | null | undefined {
 function currentLevel(key: string): string | undefined {
   const lv = rt.live[selectedId.value]?.metrics?.find((m) => m.key === key)
   return lv?.level
+}
+
+// ---- inline threshold editing ------------------------------------------ //
+const editDialog = ref(false)
+const editKey = ref('')
+const editSaving = ref(false)
+const editForm = reactive({
+  warn_min: null as number | null,
+  warn_max: null as number | null,
+  crit_min: null as number | null,
+  crit_max: null as number | null,
+})
+const editTarget = computed(() => specs.value.find((m) => m.key === editKey.value))
+
+function openEdit(m: MetricSpec) {
+  editKey.value = m.key
+  editForm.warn_min = m.warn_min ?? null
+  editForm.warn_max = m.warn_max ?? null
+  editForm.crit_min = m.crit_min ?? null
+  editForm.crit_max = m.crit_max ?? null
+  editDialog.value = true
+}
+
+async function saveEdit() {
+  if (!selectedId.value || !editKey.value) return
+  editSaving.value = true
+  try {
+    const body: Record<string, number | null> = {}
+    for (const k of ['warn_min', 'warn_max', 'crit_min', 'crit_max'] as const) {
+      const v = editForm[k]
+      if (v !== null && v !== undefined && Number.isFinite(v)) body[k] = v
+    }
+    const r = await api.patch<any>(
+      `/api/assets/${selectedId.value}/metrics/${editKey.value}/thresholds`, body)
+    if (r?.changed && Object.keys(r.changed).length) {
+      ElMessage.success('阈值已更新并写入审计')
+      // refresh detail + card config so the bands reflect the new values
+      delete cache.value[selectedId.value]
+      await select(selectedId.value)
+    }
+    editDialog.value = false
+  } catch (e: any) {
+    ElMessage.error(e?.message || '阈值更新失败')
+  } finally {
+    editSaving.value = false
+  }
 }
 
 onMounted(() => {
@@ -111,14 +163,46 @@ watch(selectedId, () => { detail.value = cache.value[selectedId.value] || null }
               <span>{{ sourceKind || '—' }}</span></div>
           </div>
 
-          <!-- metrics with band visualization -->
+          <!-- metrics with band visualization + inline threshold editing -->
           <el-card shadow="never" class="sec">
-            <template #header><b>指标规格与当前值</b></template>
+            <template #header>
+              <b>指标规格与当前值</b>
+              <span class="muted small" style="margin-left:10px">点击 ⚙ 编辑报警阈值（写入配置并审计）</span>
+            </template>
             <div class="bands">
-              <MetricBand v-for="m in specs" :key="m.key" :metric="m"
-                          :value="currentValue(m.key)" :level="currentLevel(m.key)" />
+              <div v-for="m in specs" :key="m.key" class="band-row">
+                <MetricBand :metric="m"
+                            :value="currentValue(m.key)" :level="currentLevel(m.key)" />
+                <el-button size="small" circle class="edit-btn"
+                           title="编辑阈值" @click="openEdit(m)">⚙</el-button>
+              </div>
             </div>
           </el-card>
+
+          <!-- threshold edit dialog -->
+          <el-dialog v-model="editDialog" :title="`编辑阈值 — ${editKey}`" width="420px">
+            <el-form v-if="editTarget" label-width="110px" size="small">
+              <el-form-item label="警告下限">
+                <el-input-number v-model="editForm.warn_min" :control-on-input="false" style="width:100%" />
+              </el-form-item>
+              <el-form-item label="警告上限">
+                <el-input-number v-model="editForm.warn_max" :control-on-input="false" style="width:100%" />
+              </el-form-item>
+              <el-form-item label="严重下限">
+                <el-input-number v-model="editForm.crit_min" :control-on-input="false" style="width:100%" />
+              </el-form-item>
+              <el-form-item label="严重上限">
+                <el-input-number v-model="editForm.crit_max" :control-on-input="false" style="width:100%" />
+              </el-form-item>
+              <div class="muted small" style="padding:0 0 8px 110px">
+                校验规则：warn_min ≤ warn_max ≤ crit_min ≤ crit_max（留空保持不变）
+              </div>
+            </el-form>
+            <template #footer>
+              <el-button size="small" @click="editDialog = false">取消</el-button>
+              <el-button size="small" type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
+            </template>
+          </el-dialog>
 
           <!-- downtime windows -->
           <el-card shadow="never" class="sec">
@@ -171,6 +255,8 @@ watch(selectedId, () => { detail.value = cache.value[selectedId.value] || null }
 }
 .sec { width: 100%; }
 .bands { display: flex; flex-direction: column; gap: 16px; }
+.band-row { position: relative; padding-right: 40px; }
+.edit-btn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
 .asset-md {
   white-space: pre-wrap; line-height: 1.7; margin: 0;
   max-height: 320px; overflow-y: auto;

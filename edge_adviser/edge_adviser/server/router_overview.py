@@ -172,11 +172,25 @@ async def version(request: Request) -> Any:
 
 @router.get("/health")
 async def health(request: Request) -> Any:
+    """Liveness that means something: scheduler heartbeat age + per-asset data.
+
+    ``status`` is "ok" only while the scheduler loop is alive (tick age within
+    2× the monitor interval); "degraded" otherwise — a watchdog probing this
+    endpoint can now detect a wedged scheduler instead of a green lie.
+    """
     state: AppState = await _state(request)
     snapshots = sum(1 for a in state.config.assets
                     if state.store.list_snapshots(a.asset_id, limit=1))
+    tick_age = state.tick_age_s()
+    max_age = max(state.config.monitor_interval_s * 2, 30)
+    scheduler_ok = tick_age <= max_age
     return ok(data={
-        "status": "ok",
+        "status": "ok" if scheduler_ok else "degraded",
+        "scheduler": {
+            "running": scheduler_ok,
+            "last_tick_age_s": round(tick_age, 1) if tick_age != float("inf") else None,
+        },
+        "gateway": type(state.gateway).__name__,
         "assets": len(state.config.assets),
         "assets_with_snapshots": snapshots,
     })

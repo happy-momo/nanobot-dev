@@ -126,7 +126,12 @@ def test_health_and_assets(tmp_path: Path) -> None:
     c = _make_app(tmp_path, fresh=False, stub=stub)
     r = c.get("/api/health")
     assert r.status_code == 200
-    assert r.json()["data"]["status"] == "ok"
+    data = r.json()["data"]
+    # health now reports scheduler liveness honestly: the web loop has not
+    # ticked yet under TestClient, so status must NOT claim ok
+    assert data["status"] == "degraded"
+    assert data["scheduler"]["running"] is False
+    assert "gateway" in data
 
     r = c.get("/api/assets")
     assert r.status_code == 200
@@ -205,8 +210,10 @@ def test_runlog_roundtrip(tmp_path: Path) -> None:
     assert r.status_code == 200
     assert r.json()["ok"] is True
     rl = c.get("/api/assets/pump1/runlog", params={"limit": 10})
-    rows = rl.json()["data"]
+    rows = rl.json()["data"]["rows"]
     assert any(x.get("kind") == "run_once" for x in rows)
+    # manual runs are audited as actor=hmi (distinct from scheduler ticks)
+    assert any(x.get("actor") == "hmi" for x in rows)
 
 
 def test_feedback_roundtrip(tmp_path: Path) -> None:

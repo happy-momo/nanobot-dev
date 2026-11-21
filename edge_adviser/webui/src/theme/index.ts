@@ -51,12 +51,16 @@ export const trustMeta: Record<string, { label: string; tone: string }> = {
 
 // level → fg/bg. The single source for level chips, alert severity and chart
 // bands (MetricChart markArea / Sparkline end-point all read from here).
+// offline/stale live here too: alerts derived from a data fault carry
+// subject=offline/stale, and an alert row colored green for "断连" is a lie.
 export const levelMeta: Record<string, { label: string; fg: string; bg: string }> = {
   info: { label: '正常', fg: '#3ddc97', bg: 'rgba(61,220,151,0.16)' },
   warn: { label: '警告', fg: '#f5b14c', bg: 'rgba(245,177,76,0.16)' },
   critical: { label: '严重', fg: '#f4554f', bg: 'rgba(244,85,79,0.18)' },
   insufficient: { label: '数据不足', fg: '#e8c16b', bg: 'rgba(232,193,107,0.14)' },
   unknown: { label: '无数据', fg: '#8ea0b3', bg: 'rgba(142,160,179,0.15)' },
+  offline: { label: '断连', fg: '#a07cf0', bg: 'rgba(160,124,240,0.16)' },
+  stale: { label: '数据过时', fg: '#73899c', bg: 'rgba(115,137,156,0.15)' },
 }
 
 // alert -> band / level tone (kept for backward compatibility)
@@ -66,6 +70,8 @@ export const levelTone: Record<string, string> = {
   critical: '#f4554f',
   insufficient: '#e8c16b',
   unknown: '#8ea0b3',
+  offline: '#a07cf0',
+  stale: '#73899c',
 }
 
 export function stateOf(s?: string): string {
@@ -108,6 +114,23 @@ export function toEpochMs(ts: string | number | undefined | null): number | null
   }
   const d = new Date(ts)
   return Number.isNaN(d.getTime()) ? null : d.getTime()
+}
+
+/** Local-time axis label for chart categories: "MM-DD HH:mm" (or HH:mm when
+ * same-day). Replaces raw `window_end.slice(5,16)` string cuts, which rendered
+ * UTC instants to UTC+8 operators — an 8-hour lie on every Monitor chart. */
+export function axisTs(ts: string | number | undefined | null,
+                       prev?: string | number | null): string {
+  const t = toEpochMs(ts)
+  if (t === null) return ''
+  const d = new Date(t)
+  const p = (n: number) => String(n).padStart(2, '0')
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`
+  if (prev !== undefined && prev !== null) {
+    const tp = toEpochMs(prev)
+    if (tp !== null && new Date(tp).toDateString() === d.toDateString()) return hm
+  }
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}`
 }
 
 /** Relative age like "42 秒前" / "5 分钟前" / "3 小时前" / "2 天前".

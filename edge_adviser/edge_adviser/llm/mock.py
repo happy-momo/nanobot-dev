@@ -27,10 +27,41 @@ _MODE_RE = re.compile(r"asset:[^:]+:(report|qa|learn|monitor)")
 
 
 class MockGateway:
-    """Deterministic mock of LLMGateway for demo/offline-test runs."""
+    """Deterministic mock of LLMGateway for demo/offline-test runs.
 
-    def __init__(self, config: AdviserConfig):
+    ``failure_spec`` injects deterministic failures so demos can rehearse the
+    production error paths (provider_failed / timeouts) that a
+    always-succeeding mock can never exercise:
+        {"assets": ["feeder1"], "modes": ["qa"], "every": 2, "error": "..."}
+    means: for the listed assets+modes, every 2nd call fails with the error.
+    Counting is per (asset, mode) so the demo scenario is reproducible.
+    """
+
+    def __init__(self, config: AdviserConfig,
+                 failure_spec: dict[str, Any] | None = None):
         self.config = config
+        self.failure_spec = failure_spec or {}
+        self._call_count: dict[tuple[str, str], int] = {}
+
+    def _inject_failure(self, session_key: str) -> str | None:
+        """Return an error string when this call should fail deterministically."""
+        spec = self.failure_spec
+        if not spec:
+            return None
+        m = re.search(r"asset:([^:]+):(\w+)", session_key or "")
+        asset_id, mode = (m.group(1), m.group(2)) if m else ("", "")
+        assets = spec.get("assets")
+        modes = spec.get("modes")
+        if assets and asset_id not in assets:
+            return None
+        if modes and mode not in modes:
+            return None
+        key = (asset_id, mode)
+        self._call_count[key] = self._call_count.get(key, 0) + 1
+        every = max(1, int(spec.get("every", 1)))
+        if self._call_count[key] % every == 0:
+            return str(spec.get("error", "simulated provider outage"))
+        return None
 
     async def astart(self) -> None:  # no nanobot to start
         return None
@@ -51,6 +82,12 @@ class MockGateway:
     ) -> LLMResult:
         # make the UI's busy state visible instead of flashing
         await asyncio.sleep(random.uniform(0.25, 0.7))
+
+        # deterministic failure injection (demo can rehearse provider_failed)
+        injected = self._inject_failure(session_key)
+        if injected:
+            return LLMResult(content="", used_provider="mock-failure",
+                             used_role=role, degraded=False, error=injected)
 
         facts = _decode_blocks(blocks or [])
         snapshot = facts.get("analytics-snapshot", {})

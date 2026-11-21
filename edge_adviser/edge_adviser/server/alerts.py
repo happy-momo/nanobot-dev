@@ -94,8 +94,13 @@ def list_alerts(state: AppState, asset_id: str, *, include_acked: bool = False) 
     return [a for a in all_alerts if not a.get("acked")]
 
 
-def acknowledge(state: AppState, asset_id: str, ts: float) -> bool:
-    """Acknowledge an alert by its timestamp. Rewrites the JSONL in place."""
+def acknowledge(state: AppState, asset_id: str, ts: float, note: str = "") -> bool:
+    """Acknowledge an alert by its timestamp. Rewrites the JSONL in place.
+
+    ``note`` records HOW the alert was handled — this is the raw material the
+    learn loop turns into maintenance knowledge, so it is persisted on the alert
+    itself and echoed into the feedback ledger.
+    """
     p = _alerts_path(state.store, asset_id)
     recs = _read(p)
     changed = False
@@ -103,10 +108,37 @@ def acknowledge(state: AppState, asset_id: str, ts: float) -> bool:
         if abs(r.get("ts", 0) - ts) < 1e-6 and not r.get("acked"):
             r["acked"] = True
             r["acked_at"] = time.time()
+            if note:
+                r["ack_note"] = note[:2000]
             changed = True
     if changed:
         _write(p, recs)
     return changed
+
+
+def acknowledge_many(state: AppState, asset_id: str, subject: str | None = None,
+                     note: str = "") -> int:
+    """Acknowledge every unacked alert of an asset (optionally one subject).
+
+    Returns the number of alerts acknowledged. After a plant-wide outage an
+    operator faces 20+ alerts; per-row acking alone makes the center unusable.
+    """
+    p = _alerts_path(state.store, asset_id)
+    recs = _read(p)
+    n = 0
+    for r in recs:
+        if r.get("acked"):
+            continue
+        if subject and r.get("subject") != subject:
+            continue
+        r["acked"] = True
+        r["acked_at"] = time.time()
+        if note:
+            r["ack_note"] = note[:2000]
+        n += 1
+    if n:
+        _write(p, recs)
+    return n
 
 
 def _alerts_path(store, asset_id: str) -> Path:

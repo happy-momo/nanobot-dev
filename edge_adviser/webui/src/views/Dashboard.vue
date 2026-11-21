@@ -26,7 +26,9 @@ function unitOf(c: any, key: string): string {
 }
 
 function openMonitor(id: string) {
-  router.push({ path: '/monitor/' + id })
+  // cards open the task-oriented hub (state/alerts/report/knowledge in one
+  // screen); the Monitor deep page stays reachable from there
+  router.push({ path: '/asset/' + id })
 }
 
 onMounted(() => {

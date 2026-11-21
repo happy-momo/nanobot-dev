@@ -90,6 +90,7 @@ async def _scheduler_loop(state: AppState) -> None:
     from ..core.bus import make_snapshot_event
     import datetime as _dt
     while True:
+        state.heartbeat()  # scheduler liveness for /api/health
         for asset in state.config.assets:
             try:
                 snap = await state.supervisor.run_once(asset)

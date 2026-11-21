@@ -11,6 +11,7 @@ import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, MarkAreaComponent, MarkLineComponent, DataZoomComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsType } from 'echarts/core'
+import { axisTs, toEpochMs } from '../theme'
 
 echarts.use([LineChart, GridComponent, TooltipComponent, MarkAreaComponent, MarkLineComponent, DataZoomComponent, CanvasRenderer])
 
@@ -41,9 +42,17 @@ const TONE = {
   crit: 'rgba(244,85,79,0.14)',
 }
 
+function formatFull(ms: number): string {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
 function buildOption() {
   const s = props.spec || {}
-  const cats = props.series.map((p) => (p.window_end ? p.window_end.slice(5, 16) : ''))
+  // local-time axis labels (MM-DD HH:mm, HH:mm within a day) instead of raw
+  // UTC string slices; tooltip shows the full local timestamp
+  const cats = props.series.map((p, i) => axisTs(p.window_end, props.series[i - 1]?.window_end))
   const values = props.series.map((p) => p.value)
 
   // markArea bands: contiguous zones between sorted thresholds
@@ -80,7 +89,17 @@ function buildOption() {
 
   return {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params: any) => {
+        const p0 = Array.isArray(params) ? params[0] : params
+        const idx = p0?.dataIndex ?? 0
+        const raw = props.series[idx]?.window_end
+        const t = toEpochMs(raw)
+        const full = t !== null ? formatFull(t) : String(raw ?? '')
+        return `${full}<br/>${p0?.marker || ''}${props.metricLabel || props.metricKey}: ${p0?.value ?? '—'} ${props.unit || ''}`
+      },
+    },
     grid: { left: 8, right: 16, top: 26, bottom: 36, containLabel: true },
     xAxis: { type: 'category', data: cats },
     yAxis: { type: 'value', name: props.unit || '' },

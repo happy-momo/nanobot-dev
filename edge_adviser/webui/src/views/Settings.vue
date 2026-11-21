@@ -96,8 +96,23 @@ const providerKeys = computed(() => (cfg.value?.providers ? Object.keys(cfg.valu
             <span class="num">{{ ver?.monitor_interval_s ?? cfg.monitor_interval_s }}s</span>
           </div>
           <div class="svc-item">
+            <span class="muted small">调度器</span>
+            <el-tag :type="health?.scheduler?.running ? 'success' : 'danger'" size="small">
+              {{ health?.scheduler?.running ? '运行中' : '未运行/已停止' }}
+            </el-tag>
+            <span v-if="health?.scheduler?.last_tick_age_s != null" class="muted small">
+              上次 tick {{ Math.round(health.scheduler.last_tick_age_s) }}s 前
+            </span>
+          </div>
+          <div class="svc-item">
             <span class="muted small">健康检查</span>
-            <el-tag type="success" size="small">{{ health?.status || '—' }}</el-tag>
+            <el-tag :type="health?.status === 'ok' ? 'success' : 'warning'" size="small">
+              {{ health?.status || '—' }}
+            </el-tag>
+          </div>
+          <div class="svc-item">
+            <span class="muted small">网关</span>
+            <span class="num">{{ health?.gateway || '—' }}</span>
           </div>
         </div>
       </el-card>

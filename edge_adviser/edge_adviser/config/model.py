@@ -142,11 +142,17 @@ class RunLogEntry:
     missing report day is traceable instead of silently absent."""
     asset_id: str = ""
     date: str = ""            # YYYY-MM-DD
-    kind: str = ""            # run_once|monitor|deep_report|learn|qa|serve_start
+    kind: str = ""            # run_once|monitor|deep_report|learn|qa|ack|feedback|serve_start
     outcome: str = ""         # ok|no_data|provider_failed|exception|gated
     reason: str = ""
     detail: str = ""
     timestamp: str = ""
+    # audit enrichment: who/what triggered the action and how long it took.
+    # "cron" vs "hmi" distinguishes scheduled from manual runs; elapsed_s makes
+    # a stuck provider visible; window_end links the row to the analyzed data.
+    actor: str = ""
+    elapsed_s: float | None = None
+    window_end: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

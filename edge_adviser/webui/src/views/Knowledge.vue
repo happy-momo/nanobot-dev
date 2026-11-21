@@ -17,17 +17,28 @@ const data = ref<any>(null)
 const loading = ref(false)
 const learning = ref(false)
 const activeChapter = ref(0)
+const loadError = ref('')
+// request-sequence guard: A→B fast switch must not render A's knowledge under B
+let seq = 0
 
 async function load() {
   if (!assetId.value) return
+  const mySeq = ++seq
   loading.value = true
+  loadError.value = ''
   try {
-    data.value = await api.get<any>(`/api/assets/${assetId.value}/knowledge`)
+    const d = await api.get<any>(`/api/assets/${assetId.value}/knowledge`)
+    if (mySeq !== seq) return
+    data.value = d
     activeChapter.value = 0
   } catch (e: any) {
-    ElMessage.error(e?.message || '知识库加载失败')
+    if (mySeq !== seq) return
+    // failed read ≠ empty knowledge: show the error with a retry, not the
+    // "run learning" empty-state CTA (which would waste a model call)
+    loadError.value = e?.message || '知识库加载失败'
+    data.value = null
   } finally {
-    loading.value = false
+    if (mySeq === seq) loading.value = false
   }
 }
 
@@ -35,16 +46,27 @@ async function runLearn() {
   if (!assetId.value || learning.value) return
   learning.value = true
   try {
+    // token-returned-immediately backend: completion arrives on the task stream
     const r = await rt.triggerLearn(assetId.value)
-    if (r?.error) ElMessage.warning('学习被门禁拒绝：' + r.error)
-    else {
-      ElMessage.success('学习完成，知识已更新')
-      await load()
-    }
+    const token = r?.token
+    if (!token) { learning.value = false; return }
+    const { connectSSE } = await import('../api/http')
+    const close = connectSSE(`/stream/task/${token}`, (_kind, d) => {
+      if (d?.phase === 'done' || d?.phase === 'failed') {
+        learning.value = false
+        close()
+        if (d.phase === 'done') {
+          ElMessage.success('学习完成，知识已更新')
+          load()
+        } else {
+          ElMessage.warning('学习未完成（门禁拒绝或模型失败，详见审计页）')
+        }
+      }
+    })
+    window.setTimeout(() => { if (learning.value) { learning.value = false; close() } }, 600_000)
   } catch (e: any) {
-    ElMessage.error(e?.message || '学习失败')
-  } finally {
     learning.value = false
+    ElMessage.error(e?.message || '学习失败')
   }
 }
 
@@ -90,6 +112,10 @@ watch(assetId, () => load())
     </PageHeader>
 
     <div v-if="loading" style="padding:40px;text-align:center" class="muted">加载中…</div>
+
+    <EmptyState v-else-if="loadError" icon="⚠️" text="知识库加载失败" :hint="loadError">
+      <el-button size="small" type="primary" @click="load">重试</el-button>
+    </EmptyState>
 
     <EmptyState v-else-if="!data?.memory_md?.trim()"
                 icon="📚" text="该设备还没有学习知识"

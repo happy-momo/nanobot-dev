@@ -37,6 +37,13 @@ class AppState:
 
         self.bus = EventBus(replay=1)
 
+        # scheduler liveness: the web loop stamps a monotonic heartbeat each
+        # tick so /api/health can distinguish "server up but scheduler dead"
+        # from a healthy service (a watchdog probing a static "ok" can't).
+        import time as _time
+        self.last_tick: float = 0.0
+        self._time = _time
+
         ctx = ContextBuilder(config, store)
         # allow a stub gateway to be injected for offline tests; the real
         # LLMGateway is the default production wiring. Demo mode swaps in a
@@ -61,6 +68,16 @@ class AppState:
             learner=self.learner,
             default_regime=config.analysis_regime,
         )
+
+    def heartbeat(self) -> None:
+        """Stamp the scheduler-loop liveness (called once per tick)."""
+        self.last_tick = self._time.time()
+
+    def tick_age_s(self) -> float:
+        """Seconds since the last scheduler tick (inf before the first tick)."""
+        if not self.last_tick:
+            return float("inf")
+        return self._time.time() - self.last_tick
 
     async def start(self) -> None:
         await self.supervisor.start()

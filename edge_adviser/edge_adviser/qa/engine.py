@@ -78,6 +78,11 @@ class QAEngine:
         pc = builder.build_prev_conclusion_block(asset.asset_id)
         if pc:
             blocks.append(pc)
+        # disclose known superseded/contradicted knowledge so the answer can
+        # caveat it instead of silently repeating a flagged conclusion
+        cb = builder.build_conflict_block(asset.asset_id)
+        if cb:
+            blocks.append(cb)
 
         prompt = _QA_SYSTEM + "\n\n" + _QA_PROMPT.format(question=question)
         return await self.gateway.run(

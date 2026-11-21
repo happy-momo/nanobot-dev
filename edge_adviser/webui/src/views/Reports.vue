@@ -4,7 +4,7 @@
 // deterministic provenance vs LLM interpretation remain visibly separated.
 // Downloads use the authenticated downloadFile helper (window.open loses the
 // bearer token under PIN mode).
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, downloadFile } from '../api/http'
 import { useRuntime } from '../stores/runtime'
@@ -21,12 +21,21 @@ const loadingList = ref(false)
 const current = ref<any>(null)
 const loadingDetail = ref(false)
 const generating = ref(false)
+const loadError = ref('')
+// request-sequence guard: switching A→B quickly must never let A's slower
+// response overwrite B's view (the operator would see another device's
+// reports with no hint anything is wrong)
+let seq = 0
 
 async function loadList() {
   if (!assetId.value) return
+  const mySeq = ++seq
   loadingList.value = true
+  loadError.value = ''
   try {
-    list.value = (await api.get<any>(`/api/assets/${assetId.value}/reports`)) || []
+    const l = (await api.get<any>(`/api/assets/${assetId.value}/reports`)) || []
+    if (mySeq !== seq) return  // stale response: a newer selection superseded it
+    list.value = l
     if (list.value.length && !current.value) {
       await open(list.value[0].date)
     } else if (list.value.length && current.value) {
@@ -36,21 +45,30 @@ async function loadList() {
       current.value = null
     }
   } catch (e: any) {
-    ElMessage.error(e?.message || '报告列表加载失败')
+    if (mySeq !== seq) return
+    // distinguish a failed READ from "no reports" — showing 暂无报告 here
+    // invites the engineer to regenerate instead of retrying
+    loadError.value = e?.message || '报告列表加载失败'
+    list.value = []
+    current.value = null
   } finally {
-    loadingList.value = false
+    if (mySeq === seq) loadingList.value = false
   }
 }
 
 async function open(date: string) {
+  const mySeq = seq
   loadingDetail.value = true
   try {
-    current.value = await api.get<any>(`/api/assets/${assetId.value}/reports/${date}`)
+    const d = await api.get<any>(`/api/assets/${assetId.value}/reports/${date}`)
+    if (mySeq !== seq) return  // asset switched mid-flight
+    current.value = d
   } catch (e: any) {
+    if (mySeq !== seq) return
     ElMessage.error(e?.message || '报告详情加载失败')
     current.value = null
   } finally {
-    loadingDetail.value = false
+    if (mySeq === seq) loadingDetail.value = false
   }
 }
 
@@ -62,19 +80,46 @@ async function trigger() {
   }
   generating.value = true
   try {
+    // the backend returns a token immediately and runs the (minutes-long)
+    // generation in the background; completion arrives on the task stream
     const r = await rt.triggerReport(assetId.value)
-    if (r?.report_dir) {
-      ElMessage.success('报告已生成并归档')
-      await loadList()
-    } else if (r?.error) {
-      ElMessage.warning('报告被门禁拒绝：' + r.error)
-    }
+    const token = r?.token
+    if (!token) { generating.value = false; return }
+    const close = await watchTask(token, (phase) => {
+      if (phase === 'done') {
+        generating.value = false
+        ElMessage.success('报告已生成并归档')
+        loadList()
+      } else if (phase === 'failed') {
+        generating.value = false
+        ElMessage.error('报告生成失败（详见审计页）')
+      }
+    })
+    taskCloser = close
   } catch (e: any) {
-    ElMessage.error(e?.message || '生成失败')
-  } finally {
     generating.value = false
+    ElMessage.error(e?.message || '生成失败')
   }
 }
+
+// watch /stream/task/{token} until the action reports done/failed
+let taskCloser: (() => void) | null = null
+function watchTask(token: string, onPhase: (phase: string) => void): Promise<() => void> {
+  return import('../api/http').then(({ connectSSE }) => {
+    const close = connectSSE(`/stream/task/${token}`, (kind, data) => {
+      if (data?.phase === 'done' || data?.phase === 'failed') {
+        onPhase(data.phase)
+        close()
+        taskCloser = null
+      }
+    })
+    // safety timeout: 10 min without a phase event → give up watching
+    const timer = window.setTimeout(() => { onPhase('timeout'); close(); taskCloser = null }, 600_000)
+    return () => { window.clearTimeout(timer); close() }
+  })
+}
+
+onBeforeUnmount(() => { taskCloser?.() })
 
 async function download(kind: 'md' | 'json') {
   if (!current.value || !assetId.value) return
@@ -113,7 +158,13 @@ watch(() => assetId.value, () => {
       </el-button>
     </PageHeader>
 
-    <div v-if="!list.length && !loadingList" class="muted" style="padding:40px;text-align:center">
+    <div v-if="loadError" class="muted" style="padding:40px;text-align:center">
+      <div style="color:#f4554f;margin-bottom:8px">⚠ 报告列表加载失败</div>
+      <div class="small">{{ loadError }}</div>
+      <el-button size="small" style="margin-top:12px" @click="loadList">重试</el-button>
+    </div>
+
+    <div v-else-if="!list.length && !loadingList" class="muted" style="padding:40px;text-align:center">
       暂无归档报告。点击「生成报告」或等待每日调度。
     </div>
 

@@ -15,19 +15,27 @@ const note = ref('')
 const list = ref<any[]>([])
 const saving = ref(false)
 const loading = ref(false)
+const loadError = ref('')
+// request-sequence guard against the A→B switch race
+let seq = 0
 
 const categories = ['设备状态纠正', '阈值建议', '维护记录', '数据质量', '其他']
 const category = ref('')
 
 async function load() {
   if (!assetId.value) return
+  const mySeq = ++seq
   loading.value = true
+  loadError.value = ''
   try {
-    list.value = (await api.get<any>(`/api/assets/${assetId.value}/feedback`)) || []
+    const l = (await api.get<any>(`/api/assets/${assetId.value}/feedback`)) || []
+    if (mySeq !== seq) return
+    list.value = l
   } catch (e: any) {
-    ElMessage.error(e?.message || '反馈历史加载失败')
+    if (mySeq !== seq) return
+    loadError.value = e?.message || '反馈历史加载失败'
   } finally {
-    loading.value = false
+    if (mySeq === seq) loading.value = false
   }
 }
 
@@ -47,6 +55,8 @@ async function submit() {
     await rt.sendFeedback(assetId.value, full)
     note.value = ''
     category.value = ''
+    // reload under a fresh sequence; a failure AFTER a successful POST must
+    // not read as "记录失败" (the note was already persisted)
     await load()
     ElMessage.success('反馈已记录，将进入学习闭环')
   } catch (e: any) {
@@ -97,7 +107,11 @@ watch(() => assetId.value, load)
 
       <el-card shadow="never" v-loading="loading">
         <template #header><b>历史反馈（{{ list.length }}）</b></template>
-        <el-empty v-if="!list.length" description="暂无反馈" :image-size="60" />
+        <div v-if="loadError" style="padding:20px;text-align:center">
+          <div style="color:#f4554f;margin-bottom:8px" class="small">⚠ 反馈历史加载失败</div>
+          <el-button size="small" @click="load">重试</el-button>
+        </div>
+        <el-empty v-else-if="!list.length" description="暂无反馈" :image-size="60" />
         <div v-else class="items">
           <div v-for="(f, i) in list" :key="i" class="item">
             <div class="text">{{ f.note }}</div>

@@ -4,6 +4,78 @@
 
 ---
 
+## 0.4.3 — 2026-11-21（UX 工作流闭环：告警处理链 + 审计补全 + 设备中心 + 阈值在线编辑）
+
+围绕"操作员工作流"的一次系统性升级。0.4.2 修完事实层可信性后,这一版把**告警→处理→知识**的闭环真正接通,并把审计契约补全到每个状态变更动作。
+
+### 告警工作流闭环（核心价值）
+
+- **确认附注**：`POST /alerts/{ts}/ack` 接受 `note`（≤2000 字符）——"怎么处理的"持久化在告警记录上,**并自动进入 feedback 账本**,下一次学习会把处置措施沉淀为运维知识。告警→动作→知识这条链此前是完全断开的。
+- **批量确认**：`POST /assets/{id}/alerts/ack-all`（可按 subject 过滤）与 `POST /api/alerts/ack-all`（全场）。全场断网恢复后面对 20+ 条告警不再需要逐条点击。
+- **前端告警中心**：确认对话框带附注输入、批量确认本页/全场按钮、筛选条件（资产/严重度/已确认）持久化到 localStorage——值班交接不再需要每人重新设置。
+
+### 审计契约补全
+
+- **每个状态变更动作落 runlog**：ack（含附注摘要）、feedback、qa（成功与门禁拒绝）、手动 run-now、阈值编辑全部入账；runlog 条目新增 `actor`（hmi/scheduler/cron）、`elapsed_s`（动作耗时）、`window_end`（关联分析窗口）字段——"谁在何时对哪个窗口做了什么"从此可回答。
+- **runlog 分页**：`GET /runlog?limit=N&before=offset` 游标分页（offset 游标——同秒时间戳会让 timestamp 游标丢行）；`limit` 收敛到 [1,1000]。
+- **runlog CSV 导出**：`GET /assets/{id}/runlog.csv` 供外部审计对账。
+- **health 真实化**：`/api/health` 现在报告调度器心跳（`last_tick_age_s`/`running`）与 gateway 类型；调度器停摆时返回 `status=degraded` 而非永远的 "ok"——watchdog 终于能探测到僵死的调度循环。
+
+### 设备中心（信息架构升级）
+
+- **新路由 `/asset/:id`**：任务导向的聚合页——状态判读条（状态/信任/级别/覆盖率/相对时间）+ 实时指标与趋势 + 该设备活跃告警 + 最近报告摘要 + 已学习知识章节导航 + 设备档案。回答操作员"这台设备现在怎么样、我该做什么"一屏完成;Dashboard 卡片点击直达。
+- **后台化动作**：`POST /report`、`POST /learn` 立即返回任务 token（BackgroundTasks 执行）,深度报告几分钟的模型调用不再阻塞 HTTP（此前浏览器 30-60s 超时重试→双重执行）;前端经 `/stream/task/{token}` 接收完成/失败事件。
+
+### 阈值在线编辑
+
+- **`PATCH /api/assets/{id}/metrics/{key}/thresholds`**：现场调阈值不再需要 SSH 改 JSON 重启。校验（有限值、warn 带 ≤ crit 带、crit 下限 ≥ warn 上限）、原子写回配置文件（tmp + os.replace）、内存即时生效、runlog 审计（from→to）。Assets 页每指标 ⚙ 按钮弹出编辑对话框。
+
+### 知识闭环补全
+
+- **冲突知识进 prompt**：`build_conflict_block` 此前是死代码——账本记录了矛盾知识但 QA/报告 prompt 从未看到。现在 QA 与报告上下文都携带"已知被取代的知识",模型可以加 caveat 而非复述已被推翻的结论。
+
+### 前端交互正确性
+
+- **设备切换竞态守卫**：Reports/Knowledge/Feedback/Runlog/Assets 五个视图加请求序号守卫——快速 A→B 切换不再显示 A 的数据。
+- **错误态≠空态**：报告/知识/审计/反馈加载失败显示错误+重试,不再伪装成"暂无数据"诱导重新生成。
+- **后台标签页唤醒重同步**：visibilitychange 后检测 60s 无事件即重拉 overview+alerts——工业平板息屏数小时回来不再是"绿点+旧数据"。
+- **图表时间轴本地化**：MetricChart 轴标签从 UTC 字符串切片改为本地时区"MM-DD HH:mm"（同日只显 HH:mm）,tooltip 显示完整本地时间——UTC+8 现场此前看到的时间差 8 小时。
+- **levelMeta 补 offline/stale**：断连/过时告警不再显示绿色。
+- **Settings 服务状态卡**：调度器运行状态/上次 tick 心跳/网关类型。
+- **新组件依赖**：api 客户端补 `patch` 方法;Alerts/Runlog/AssetHub 新 UI。
+
+### 工程与测试
+
+- **MockGateway 故障注入**：`failure_spec`（assets/modes/every/error）确定性注入 provider 失败——demo 可以演练生产错误路径（此前 mock 永远成功,provider_failed 前端渲染从未被端到端走过）。
+- 测试 122 → **137**（新增 `test_ux_workflow.py` 15 项:ack 附注→feedback 联动、批量确认、分页/CSV、QA/feedback 审计、health 降级语义、feedback 长度限制、report/learn 立即返回 token、阈值编辑校验/持久化/审计、mock 故障注入确定性）。
+- demo 冒烟 12 项全过（health 心跳、反馈审计、分页、CSV、后台 report 1.25s 返回 token、阈值 PATCH 持久化+拒绝非法带、ack 附注→feedback→runlog 全链路、/asset/pump1 深链接）。
+
+---
+
+## 0.4.2 — 2026-11-21（P0 可信性修复：样本卫生 + 真实时间轴 slope + fail-closed 门禁 + 前端实时真值）
+
+三层审计确认的 8 个 P0 缺陷全部修复——后端事实层不再"说谎",前端不再"冻结"。
+
+### 后端 — 事实层可信性
+
+- **样本卫生管道**（`sanitize_samples`）：所有样本先按真实时间排序 → 按 timestamp 去重 → 裁剪窗口外行,再做统计。60 行重复数据不再显示 coverage=1.0/trust=full/healthy;卫生丢弃数写入 `state_reason` 可审计。
+- **slope 真实时间轴**：从"样本序号当秒"改为真实经过时间（单位:每小时）;每个指标的 NaN 过滤与时间轴同步过滤（丢一个 NaN 不再把后续样本时间轴前移）。50→55→60°C @0/30/60s 现在得到 ~600°C/h（正确）,修复前 ~20（错误）。
+- **门禁 fail-closed**：未来时间戳快照年龄=inf 判 stale（此前截 0 永远"新鲜"）;未知/缺失/拼错的 status → UNKNOWN（此前三处 fail-open 成 HEALTHY）。
+
+### 前端 — 显示真值
+
+- **fleetKpi 计数语义**：warn/critical 按 overall_level（告警级别）计数——此前按 state 计数永远是 0;degraded 含 insufficient。
+- **Dashboard 实时化**：SSE 快照更新 latest_values、追加 sparkline 点、告警角标随 ack 增减——此前全部冻结在页面加载值。
+- **响应式时钟**：store 维护秒级 nowSec,"42 秒前"每秒真实前进;未来时间戳显示"刚刚"。
+- **QA trust 回答时快照**：徽章渲染历史答案自己的 trust——切换设备/数据改善不再改写历史。
+- **Monitor 图表顺序**：SSE 事件按 window_end 排序合并（unshift 曾让曲线新→旧倒退）;acked_at 统一 epoch 秒;SSE 重连 500ms 后自动重拉 overview+alerts。
+
+### 测试
+
+111 → 122（`test_p0_trust.py` 11 项回归）;修复 test_p1_fixes 硬编码 2026-11-19 的腐化 fixture。
+
+---
+
 ## 0.4.1 — 2026-11-19（系统性加固：可信度契约修复 + 稳定性 + 安全 + cron 调度）
 
 对全部四个层面（分析引擎 / 调度 / HMI 服务端 / 前端）做了一次系统性代码审查，修复了审查确认的真实缺陷，并接入仓库 CI。全部 52 项测试通过。
