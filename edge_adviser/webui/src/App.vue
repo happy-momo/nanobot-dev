@@ -116,9 +116,12 @@ onBeforeUnmount(() => {
 // must tell the truth about DATA (spec §5.1: 断开时变灰 RECONNECTING), so an
 // online stream whose last event is older than the freshness gate reads as
 // reconnecting rather than LIVE.
+// rt.nowSec (the store's 1s ticking clock) is read on the stale path so this
+// computed re-evaluates every second — otherwise a silent-but-open stream
+// stayed "实时" forever, because Date.now() alone is not a reactive dependency.
 const connDisplay = computed(() => {
   if (rt.conn !== 'online') return rt.conn
-  const staleMs = Date.now() - rt.lastEventAt
+  const staleMs = rt.nowSec * 1000 + 500 - rt.lastEventAt
   return staleMs > 60_000 ? 'reconnecting' : 'online'
 })
 

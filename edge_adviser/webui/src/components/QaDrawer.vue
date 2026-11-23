@@ -9,14 +9,55 @@
 import { DialogPortal, DialogRoot, DialogContent, DialogOverlay, DialogTitle,
   DialogDescription, DialogClose } from 'reka-ui'
 import { X } from '@lucide/vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps<{ open: boolean; assetId?: string }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+// ------------------------------------------------------- slide-out on close --
+// App keeps this drawer mounted (v-if-less) and unmounts only on `close`, so we
+// own the exit here: intercept the close request, flip the Reka root to closed
+// (data-state=closed → qd-out plays), and only then tell App to unmount. Emitting
+// `close` immediately was a hard cut — Presence reads the computed animation-name
+// while the tree is already tearing down, so the 260ms exit never rendered.
+const EXIT_MS = 260
+const closing = ref(false)
+let exitTimer = 0
+
+const rootOpen = computed(() => props.open && !closing.value)
+
+// reduced motion: the stylesheet drops the animation, so there is nothing to
+// wait for — unmount on the spot (no flash of a static panel).
+const exitMs = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ? 0
+  : EXIT_MS
+
+watch(() => props.open, (open) => {
+  if (open) {
+    // reopening mid-exit (e.g. openQa from a view while it slides out)
+    window.clearTimeout(exitTimer)
+    closing.value = false
+    return
+  }
+  if (closing.value) return   // exit already in flight
+  requestClose()
+})
+
+/** begin the exit, then hand the unmount to App once the 260ms slide-out is done */
+function requestClose() {
+  closing.value = true
+  exitTimer = window.setTimeout(() => {
+    closing.value = false
+    emit('close')
+  }, exitMs)
+}
+
+onBeforeUnmount(() => window.clearTimeout(exitTimer))
 </script>
 
 <template>
-  <DialogRoot :open="props.open" @update:open="(v: boolean) => { if (!v) emit('close') }">
+  <DialogRoot :open="rootOpen" @update:open="(v: boolean) => { if (!v) requestClose() }">
     <DialogPortal>
       <DialogOverlay class="qd-ov" />
       <DialogContent class="qd-panel" :aria-describedby="undefined">
@@ -50,7 +91,10 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 
 <style scoped>
 .qd-ov { position: fixed; inset: 0; background: rgba(2, 5, 10, 0.6);
-  backdrop-filter: blur(2px); z-index: 60; }
+  backdrop-filter: blur(2px); z-index: 60;
+  animation: qd-ov-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+@keyframes qd-ov-in { from { opacity: 0; } to { opacity: 1; } }
 
 .qd-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 100vw;
   display: flex; flex-direction: column; background: var(--bg1);
@@ -59,6 +103,9 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 
 @keyframes qd-in { from { transform: translateX(24px); opacity: 0; }
   to { transform: none; opacity: 1; } }
+
+@keyframes qd-out { from { transform: none; opacity: 1; }
+  to { transform: translateX(24px); opacity: 0; } }
 
 .qd-head { display: flex; align-items: flex-start; justify-content: space-between;
   gap: 10px; padding: 14px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
@@ -80,10 +127,14 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 </style>
 
 <style>
-/* data-state driven entrance/exit; the scoped keyframe covers the open case,
-   this global block handles Reka's closed phase + reduced-motion */
-.qd-panel[data-state="closed"] { display: none; }
+/* data-state driven exit phase: the scoped block owns the open-state styles,
+   this global block handles Reka's closed phase + reduced motion. */
+.qd-panel[data-state="closed"] { animation: qd-out 260ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+
+.qd-ov[data-state="closed"] { animation: qd-ov-out 260ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+@keyframes qd-ov-out { from { opacity: 1; } to { opacity: 0; } }
+
 @media (prefers-reduced-motion: reduce) {
-  .qd-panel { animation: none !important; }
+  .qd-panel, .qd-ov { animation: none !important; }
 }
 </style>
