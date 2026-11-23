@@ -68,16 +68,29 @@ function suffix(card: AssetCard): string {
   return ''
 }
 
-/** positive slope of the card's sparkline series (first metric), oldest→newest */
+/**
+ * WHAT THE SERIES ACTUALLY IS: runtime.series is the asset's FIRST configured
+ * metric (backend `_sparkline_series` / telemetry `metrics[0]`; the point
+ * carries no key). So the ↗ may only fire when a first metric exists at all —
+ * mirroring the backend's `if not first_key: return []` gate — and with the
+ * same rounded-delta rule as the Overview verdict slope, so the strip and the
+ * verdict row can never advertise a rise the other one doesn't.
+ */
+function firstKeyOf(card: AssetCard): string {
+  const cfg = card.config?.metrics || card.metrics || []
+  for (const m of cfg) { if (m && m.key) return m.key }
+  return ''
+}
+
+/** rounded positive slope of the first-metric series, oldest → newest */
 function slopeOf(card: AssetCard): number {
+  if (!firstKeyOf(card)) return 0
   const s = card.runtime.series || []
   if (s.length < 2) return 0
-  const last = s[s.length - 1]
-  const prev = s[s.length - 2]
-  const a = prev.value
-  const b = last.value
+  const a = s[s.length - 2].value
+  const b = s[s.length - 1].value
   if (a === null || b === null) return 0
-  return b - a
+  return Math.round((b - a) * 10) / 10
 }
 
 /** tooltip facts: 状态 / 覆盖 / 最新值 (spec §3.1) */

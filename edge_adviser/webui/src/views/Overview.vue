@@ -14,7 +14,7 @@
 // keep segments, rows and numbers moving without any local polling here.
 import { computed, inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useRuntime, type AssetCard, type MetricSpec } from '../stores/runtime'
+import { useRuntime, type AssetCard } from '../stores/runtime'
 import { stateMeta, levelMeta, type AssetState, type AlertLevel } from '../theme/meta'
 import { toast } from '../stores/toast'
 import ObsPanel from '../components/ObsPanel.vue'
@@ -86,31 +86,19 @@ const compactFaults = computed(() => {
 })
 
 // ------------------------------------------------------------ trend & slope --
-const BAND_RANK: Record<string, number> = { norm: 0, info: 0, warn: 1, critical: 2, crit: 2 }
-
-/** which band does one metric's latest value sit in (client-side recompute) */
-function bandOf(c: AssetCard, m: MetricSpec): number {
-  const v = (c.runtime.latest_values || {})[m.key]
-  if (v === null || v === undefined || !Number.isFinite(v)) return 0
-  const critHit = (m.crit_min !== null && m.crit_min !== undefined && v < m.crit_min) ||
-    (m.crit_max !== null && m.crit_max !== undefined && v > m.crit_max)
-  if (critHit) return 2
-  const warnHit = (m.warn_min !== null && m.warn_min !== undefined && v < m.warn_min) ||
-    (m.warn_max !== null && m.warn_max !== undefined && v > m.warn_max)
-  return warnHit ? 1 : 0
-}
-
-/** main metric = the worst-band metric, else the card's first configured one */
-function mainKeyOf(c: AssetCard): string {
+// WHAT THE SERIES ACTUALLY IS: `/api/overview` runtime.series is built by the
+// backend `_sparkline_series` from the asset's FIRST configured metric (same
+// for the telemetry SSE path, which appends data.metrics[0]), and the point
+// carries no metric key. So the trend thumbnail's label/slope/unit must
+// describe that first metric — never the worst-band one, or pump1 would read
+// "↘ 0.1mm/s" over a temperature line. Worst-band identity stays where it
+// belongs: the verdict state word + ledger values.
+/** the card's first configured metric key = the plotted series' actual key
+ * (mirrors backend `next(m.key for m in metrics if m)`) */
+function firstKeyOf(c: AssetCard): string {
   const cfg = c.config?.metrics || c.metrics || []
-  if (!cfg.length) return ''
-  let worst = cfg[0].key
-  let rank = -1
-  for (const m of cfg) {
-    const r = bandOf(c, m)
-    if (r > rank) { rank = r; worst = m.key }
-  }
-  return worst
+  for (const m of cfg) { if (m && m.key) return m.key }
+  return ''
 }
 
 function unitOf(c: AssetCard, key: string): string {
@@ -120,31 +108,28 @@ function unitOf(c: AssetCard, key: string): string {
 
 interface Trend { pts: number[]; slope: number }
 
-/** sparkline of the main metric's history, oldest → newest (spec: history=8) */
+/** sparkline of the FIRST metric's history, oldest → newest (spec: history=8) */
 function trendOf(c: AssetCard): Trend {
-  const key = mainKeyOf(c)
   const pts = (c.runtime.series || [])
     .map((p) => p.value)
     .filter((v): v is number => v !== null)
-  if (!key || pts.length < 2) return { pts: [], slope: 0 }
+  if (!firstKeyOf(c) || pts.length < 2) return { pts: [], slope: 0 }
   return { pts, slope: pts[pts.length - 1] - pts[pts.length - 2] }
 }
 
 function slopeText(t: Trend, unit: string): string {
   if (!t.pts.length) return ''
-  // arrow compares the ROUNDED delta: a -0.04 drift printing "↘ 0.0" is noise
-  const r = slopeRounded(t)
+  // arrow direction uses the ROUNDED delta (a -0.04 jitter is not a trend),
+  // but the magnitude prints the RAW |delta| so a -0.04 drift reads "↘ 0.0"
+  // instead of a bare arrow with no number
+  const r = Math.round(t.slope * 10) / 10
   const arrow = r > 0 ? '↗' : r < 0 ? '↘' : '→'
-  return `${arrow} ${Math.abs(r).toFixed(1)}${unit}/窗口`
+  return `${arrow} ${Math.abs(t.slope).toFixed(1)}${unit}/窗口`
 }
 
-function slopeRounded(t: Trend): number {
-  return Math.round(t.slope * 10) / 10
-}
-
-/** rising main metric on a warn verdict gets the warm tone (visual "↗" cue) */
+/** rising series on a warn verdict gets the warm tone (visual "↗" cue) */
 function slopeColor(t: Trend): string {
-  return slopeRounded(t) > 0 ? 'var(--warn)' : 'var(--tx-dim)'
+  return Math.round(t.slope * 10) / 10 > 0 ? 'var(--warn)' : 'var(--tx-dim)'
 }
 
 // ------------------------------------------------------------------- trust --
@@ -273,7 +258,7 @@ onMounted(() => {
                 <span
                   class="vrow-slope mono"
                   :style="{ color: slopeColor(trendOf(c)) }"
-                >{{ slopeText(trendOf(c), unitOf(c, mainKeyOf(c))) }}</span>
+                >{{ slopeText(trendOf(c), unitOf(c, firstKeyOf(c))) }}</span>
               </div>
               <div class="vrow-trust">
                 <span class="eyebrow">TRUST</span>
@@ -401,6 +386,8 @@ onMounted(() => {
   border: 1px solid var(--line-2); background: var(--bg2); color: var(--tx);
   font-size: 11px; padding: 5px 10px; border-radius: var(--r-s); cursor: pointer;
   letter-spacing: .04em; white-space: nowrap;
+  /* touch-target floor (review Important): ≥32px even at the 10px type scale */
+  min-height: 32px;
 }
 .act:hover { background: var(--bg3); border-color: var(--cyan-dim); color: var(--tx-hi); }
 .act:disabled { opacity: .55; cursor: default; }
