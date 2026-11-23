@@ -14,6 +14,7 @@ Rules:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -21,6 +22,19 @@ from typing import Any
 
 from .deps import AppState
 from ..core.bus import KIND_ALERT
+
+# Per-asset write locks: acknowledge/acknowledge_many do a read→modify→write of
+# alerts.jsonl, and ingest_alert (scheduler, async) appends concurrently. Two
+# racing writers can drop each other's rows (a just-fired alert lost, or an ack
+# silently reverted). One lock per asset serializes all ledger mutations.
+_locks: dict[str, asyncio.Lock] = {}
+
+
+def _lock_for(asset_id: str) -> asyncio.Lock:
+    lock = _locks.get(asset_id)
+    if lock is None:
+        lock = _locks[asset_id] = asyncio.Lock()
+    return lock
 
 # An alert is warranted by one of two facts:
 #   * a REAL alarm  — overall_level is warn/critical (the engine's band verdict),
@@ -87,6 +101,19 @@ def ingest_alert(state: AppState, asset_id: str, snapshot: dict[str, Any]) -> di
     return alert
 
 
+async def ingest_alert_async(state: AppState, asset_id: str,
+                             snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Lock-guarded variant of ingest_alert for async call sites.
+
+    ``publish_alert`` runs on the event loop between awaits, so its
+    read→dedup→append sequence can interleave with an in-flight acknowledge.
+    Taking the same per-asset lock as the ack paths makes ledger mutations
+    mutually exclusive.
+    """
+    async with _lock_for(asset_id):
+        return ingest_alert(state, asset_id, snapshot)
+
+
 def list_alerts(state: AppState, asset_id: str, *, include_acked: bool = False) -> list[dict[str, Any]]:
     all_alerts = _read(_alerts_path(state.store, asset_id))
     if include_acked:
@@ -94,51 +121,55 @@ def list_alerts(state: AppState, asset_id: str, *, include_acked: bool = False) 
     return [a for a in all_alerts if not a.get("acked")]
 
 
-def acknowledge(state: AppState, asset_id: str, ts: float, note: str = "") -> bool:
+async def acknowledge(state: AppState, asset_id: str, ts: float, note: str = "") -> bool:
     """Acknowledge an alert by its timestamp. Rewrites the JSONL in place.
 
     ``note`` records HOW the alert was handled — this is the raw material the
     learn loop turns into maintenance knowledge, so it is persisted on the alert
-    itself and echoed into the feedback ledger.
+    itself and echoed into the feedback ledger. Lock-guarded against concurrent
+    ingest (see _lock_for).
     """
-    p = _alerts_path(state.store, asset_id)
-    recs = _read(p)
-    changed = False
-    for r in recs:
-        if abs(r.get("ts", 0) - ts) < 1e-6 and not r.get("acked"):
-            r["acked"] = True
-            r["acked_at"] = time.time()
-            if note:
-                r["ack_note"] = note[:2000]
-            changed = True
-    if changed:
-        _write(p, recs)
-    return changed
+    async with _lock_for(asset_id):
+        p = _alerts_path(state.store, asset_id)
+        recs = _read(p)
+        changed = False
+        for r in recs:
+            if abs(r.get("ts", 0) - ts) < 1e-6 and not r.get("acked"):
+                r["acked"] = True
+                r["acked_at"] = time.time()
+                if note:
+                    r["ack_note"] = note[:2000]
+                changed = True
+        if changed:
+            _write(p, recs)
+        return changed
 
 
-def acknowledge_many(state: AppState, asset_id: str, subject: str | None = None,
-                     note: str = "") -> int:
+async def acknowledge_many(state: AppState, asset_id: str, subject: str | None = None,
+                           note: str = "") -> int:
     """Acknowledge every unacked alert of an asset (optionally one subject).
 
     Returns the number of alerts acknowledged. After a plant-wide outage an
     operator faces 20+ alerts; per-row acking alone makes the center unusable.
+    Lock-guarded against concurrent ingest (see _lock_for).
     """
-    p = _alerts_path(state.store, asset_id)
-    recs = _read(p)
-    n = 0
-    for r in recs:
-        if r.get("acked"):
-            continue
-        if subject and r.get("subject") != subject:
-            continue
-        r["acked"] = True
-        r["acked_at"] = time.time()
-        if note:
-            r["ack_note"] = note[:2000]
-        n += 1
-    if n:
-        _write(p, recs)
-    return n
+    async with _lock_for(asset_id):
+        p = _alerts_path(state.store, asset_id)
+        recs = _read(p)
+        n = 0
+        for r in recs:
+            if r.get("acked"):
+                continue
+            if subject and r.get("subject") != subject:
+                continue
+            r["acked"] = True
+            r["acked_at"] = time.time()
+            if note:
+                r["ack_note"] = note[:2000]
+            n += 1
+        if n:
+            _write(p, recs)
+        return n
 
 
 def _alerts_path(store, asset_id: str) -> Path:
@@ -176,7 +207,7 @@ def _write(path: Path, recs: list[dict[str, Any]]) -> None:
 
 async def publish_alert(state: AppState, asset_id: str, snapshot: dict[str, Any]) -> None:
     """Derive + dedup + persist + broadcast an alert, if any."""
-    alert = ingest_alert(state, asset_id, snapshot)
+    alert = await ingest_alert_async(state, asset_id, snapshot)
     if alert is None:
         return
     # retention: keep the alerts ledger bounded with the same cap as the runlog

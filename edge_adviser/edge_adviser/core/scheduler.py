@@ -70,7 +70,14 @@ class Supervisor:
                 try:
                     self._sources[spec.asset_id] = create_source(spec)
                 except NotImplementedError as exc:
+                    # a configured-but-unwired source (mqtt/opcua/modbus
+                    # skeletons) must be visible in the audit trail, not just
+                    # the log — otherwise "asset configured, never collected"
+                    # is discoverable only by noticing the empty dashboards
                     logger.warning("source not available for {a}: {e}", a=spec.asset_id, e=exc)
+                    log_run_event(self.store, spec.asset_id, "serve_start", "no_data",
+                                  reason=f"source_unwired: {spec.kind.value}",
+                                  detail=str(exc)[:200])
         # P4: warn + audit any asset with zero snapshots at startup so a cold
         # asset is never silently treated as healthy.
         for asset in self.config.assets:
@@ -108,9 +115,19 @@ class Supervisor:
             except Exception:  # noqa: BLE001 — pruning must never break a run
                 pass
 
-    def _archive_empty(self, asset: AssetSpec, st: ScheduleState,
-                       now: "Any", started: float, *, reason: str,
-                       kind: str) -> dict[str, Any]:
+    async def _save_and_prune_async(self, asset_id: str, snap_dict: dict[str, Any]) -> None:
+        """Thread-pool variant of _save_and_prune.
+
+        Snapshot serialization + retention pruning are blocking file I/O on the
+        scheduler's event loop; with many assets (or big windows) they stall the
+        SSE heartbeat and every API handler sharing the loop. Offloading keeps
+        the loop responsive while the durable write happens in a worker thread.
+        """
+        await asyncio.to_thread(self._save_and_prune, asset_id, snap_dict)
+
+    async def _archive_empty(self, asset: AssetSpec, st: ScheduleState,
+                             now: "Any", started: float, *, reason: str,
+                             kind: str) -> dict[str, Any]:
         """Archive an empty-window snapshot, advance the offline counter, audit.
 
         Shared by the pull-failed, empty-window, and analyze-failed paths so all
@@ -122,7 +139,7 @@ class Supervisor:
         state = classify_snapshot_state(
             asset, {"sample_count": 0}, st.consecutive_empty, now, self.config)
         snap_dict = empty_snapshot(asset, now, state=state)
-        self._save_and_prune(asset.asset_id, snap_dict)
+        await self._save_and_prune_async(asset.asset_id, snap_dict)
         self.learner.buffer_snapshot(asset.asset_id, snap_dict)
         log_run_event(self.store, asset.asset_id, "run_once", kind,
                       reason=f"{reason}; consecutive={st.consecutive_empty}",
@@ -155,22 +172,28 @@ class Supervisor:
             # treat a failed pull exactly like an empty window: archive the empty
             # snapshot and advance the state machine so persistent failures still
             # reach OFFLINE and leave an audit trail instead of vanishing silently.
-            return self._archive_empty(asset, st, now, started,
+            return await self._archive_empty(asset, st, now, started,
                                        reason=f"pull failed: {exc}", kind="exception")
         if not samples:
-            return self._archive_empty(asset, st, now, started,
+            return await self._archive_empty(asset, st, now, started,
                                        reason="empty_window", kind="no_data")
         try:
             st.consecutive_empty = 0
-            snapshot = analyze(asset, samples, source=src.kind, regime=regime)
+            # numpy statistics can take real CPU time on large windows — run in
+            # a worker thread so the shared event loop (SSE heartbeat, API
+            # handlers) is not stalled mid-analysis
+            snapshot = await asyncio.to_thread(
+                analyze, asset, samples, source=src.kind, regime=regime,
+                window_start=start.isoformat(timespec="seconds"),
+                window_end=now.isoformat(timespec="seconds"))
         except Exception as exc:
             # analysis must never escape run_once: in web mode the loop swallows
             # exceptions, which would drop the asset from monitoring with no
             # snapshot, no runlog entry, and no offline transition.
-            return self._archive_empty(asset, st, now, started,
+            return await self._archive_empty(asset, st, now, started,
                                        reason=f"analyze failed: {exc}", kind="exception")
         snap_dict = snapshot.to_dict()
-        self._save_and_prune(asset.asset_id, snap_dict)
+        await self._save_and_prune_async(asset.asset_id, snap_dict)
         self.learner.buffer_snapshot(asset.asset_id, snap_dict)
         log_run_event(self.store, asset.asset_id, "run_once", "ok",
                       reason="", state=snap_dict.get("status"))

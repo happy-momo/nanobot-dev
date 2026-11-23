@@ -131,11 +131,12 @@ def test_ack_all_fleet_endpoint(tmp_path: Path) -> None:
     assert any("批量确认" in f.get("note", "") for f in fb)
 
 
-def test_ack_many_per_subject(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_ack_many_per_subject(tmp_path: Path) -> None:
     _seed_alerts(tmp_path, n=2, subject="warn")
     _seed_alerts(tmp_path, n=2, subject="critical")
     state = _state_for(tmp_path)
-    n = acknowledge_many(state, "pump1", subject="critical", note="bulk")
+    n = await acknowledge_many(state, "pump1", subject="critical", note="bulk")
     assert n == 2
     p = state.store.asset_dir("pump1") / "alerts.jsonl"
     recs = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
@@ -281,11 +282,24 @@ def test_threshold_patch_rejects_inverted_band(tmp_path: Path) -> None:
     assert "warn_min" in r.json()["error"]
 
 
-def test_threshold_patch_rejects_crit_below_warn(tmp_path: Path) -> None:
+def test_threshold_patch_rejects_overlapping_bands(tmp_path: Path) -> None:
+    """A crit band intersecting the warn band makes level derivation ambiguous."""
+    c = _client(tmp_path)
+    # warn band [60..68] merged with crit band [55..70] overlaps on both sides
+    r = c.patch("/api/assets/pump1/metrics/temp/thresholds",
+                json={"warn_min": 60, "crit_min": 55, "crit_max": 70})
+    assert r.json()["ok"] is False
+    assert "overlap" in r.json()["error"]
+
+
+def test_threshold_patch_accepts_low_side_crit(tmp_path: Path) -> None:
+    """A crit band entirely BELOW the warn band is a legitimate low-side trip
+    (e.g. pressure collapse): crit [40..50] vs warn_min=60 — no overlap."""
     c = _client(tmp_path)
     r = c.patch("/api/assets/pump1/metrics/temp/thresholds",
-                json={"crit_min": 50})  # below warn_max=68
-    assert r.json()["ok"] is False
+                json={"warn_min": 60, "crit_min": 40, "crit_max": 50})
+    assert r.json()["ok"] is True
+    assert r.json()["data"]["changed"]["crit_max"] == [73, 50]
 
 
 def test_threshold_patch_unknown_metric(tmp_path: Path) -> None:

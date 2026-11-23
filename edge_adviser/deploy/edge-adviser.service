@@ -1,0 +1,38 @@
+# EdgeAdviser systemd unit — bare-metal edge hosts without Docker.
+#
+# Install:
+#   sudo cp edge_adviser/deploy/edge-adviser.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now edge-adviser
+#
+# Assumes a pip/uv install into /opt/edge-adviser/.venv with the package
+# installed (pip install -e /path/to/repo/edge_adviser) and config at
+# /etc/edge-adviser/config.json.
+
+[Unit]
+Description=EdgeAdviser — equipment intelligence HMI
+Documentation=file:///opt/edge-adviser/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=edge-adviser
+Group=edge-adviser
+# workspace lives on its own directory so retention-capped snapshots and the
+# audit ledgers survive upgrades
+Environment=EDGE_ADVISER_WORKSPACE=/var/lib/edge-adviser
+WorkingDirectory=/opt/edge-adviser
+ExecStart=/opt/edge-adviser/.venv/bin/edge-adviser web /etc/edge-adviser/config.json --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+# hardening defaults for an always-on LAN service
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/edge-adviser /etc/edge-adviser
+PrivateTmp=yes
+ProtectHome=yes
+
+# journal is the log story: `journalctl -u edge-adviser -f`
+[Install]
+WantedBy=multi-user.target

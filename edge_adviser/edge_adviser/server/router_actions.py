@@ -226,6 +226,9 @@ async def ask(request: Request, asset_id: str, body: AskIn) -> Any:
         "used_role": res.used_role.value if res.used_role else None,
         "degraded": res.degraded,
         "elapsed_s": elapsed,
+        # provenance of the snapshot the answer was actually built from — the
+        # UI badge uses this instead of guessing from live telemetry
+        "snapshot": res.snapshot_meta or None,
     })
 
 

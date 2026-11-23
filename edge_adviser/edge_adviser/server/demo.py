@@ -122,7 +122,9 @@ async def _seed_asset_snapshots(state: AppState, asset: AssetSpec,
             continue
         if not samples:
             continue
-        snap = analyze(asset, samples, source="simulator", regime="seeded")
+        snap = analyze(asset, samples, source="simulator", regime="seeded",
+                       window_start=start.isoformat(timespec="seconds"),
+                       window_end=end.isoformat(timespec="seconds"))
         state.store.save_snapshot(asset.asset_id, snap.to_dict())
 
 

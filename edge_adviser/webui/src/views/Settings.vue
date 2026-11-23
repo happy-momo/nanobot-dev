@@ -14,6 +14,7 @@ const rt = useRuntime()
 const cfg = ref<any>(null)
 const ver = ref<any>(null)
 const health = ref<any>(null)
+const stats = ref<any>(null)
 const loading = ref(false)
 const errored = ref(false)
 
@@ -21,14 +22,16 @@ async function load() {
   loading.value = true
   errored.value = false
   try {
-    const [c, v, h] = await Promise.all([
+    const [c, v, h, s] = await Promise.all([
       api.get<any>('/api/config'),
       api.get<any>('/api/version'),
       api.get<any>('/api/health'),
+      api.get<any>('/api/stats').catch(() => null),  // stats is supplementary
     ])
     cfg.value = c
     ver.value = v
     health.value = h
+    stats.value = s
   } catch {
     errored.value = true
   } finally {
@@ -54,6 +57,19 @@ function val(k: string) {
 }
 
 const providerKeys = computed(() => (cfg.value?.providers ? Object.keys(cfg.value.providers) : []))
+
+function fmtPct(r: number | null | undefined) {
+  return r == null ? '—' : `${Math.round(r * 100)}%`
+}
+function fmtMtta(s: number | null | undefined) {
+  if (s == null) return '—'
+  return s < 90 ? `${Math.round(s)}s` : `${Math.round(s / 60)}min`
+}
+function fmtGb(b: number | null | undefined) {
+  if (b == null) return '—'
+  return b > 1024 * 1024 * 1024
+    ? `${(b / 1024 / 1024 / 1024).toFixed(1)}GB` : `${Math.round(b / 1024 / 1024)}MB`
+}
 </script>
 
 <template>
@@ -145,6 +161,44 @@ const providerKeys = computed(() => (cfg.value?.providers ? Object.keys(cfg.valu
           <div class="muted small">preset={{ cfg.providers[rk].model_preset }} · api_base={{ cfg.providers[rk].api_base || '—' }}</div>
           <div class="muted small">timeout={{ cfg.providers[rk].timeout_s }}s · max_tokens={{ cfg.providers[rk].max_tokens }}</div>
         </div>
+      </el-card>
+
+      <el-card shadow="never" class="wide">
+        <template #header>
+          <b>运行观测</b>
+          <span class="muted small" style="margin-left:8px">模型成效 · 告警响应 · 磁盘占用（来自审计账本，只读）</span>
+        </template>
+        <div v-if="stats" class="svc">
+          <div class="svc-item">
+            <span class="muted small">模型调用成功率</span>
+            <span class="num">{{ fmtPct(stats.providers?.success_rate) }}</span>
+            <span class="muted small">{{ stats.providers?.ok ?? 0 }} / {{ stats.providers?.calls ?? 0 }} 次成功</span>
+          </div>
+          <div class="svc-item">
+            <span class="muted small">平均 / 最大耗时</span>
+            <span class="num">{{ stats.providers?.avg_elapsed_s ?? '—' }}s / {{ stats.providers?.max_elapsed_s ?? '—' }}s</span>
+          </div>
+          <div class="svc-item">
+            <span class="muted small">门禁拒绝次数</span>
+            <span class="num">{{ stats.providers?.gated_refusals ?? 0 }}</span>
+          </div>
+          <div class="svc-item">
+            <span class="muted small">告警确认时长 MTTA</span>
+            <span class="num">{{ fmtMtta(stats.alerts?.mtta_s) }}</span>
+            <span class="muted small">未确认 {{ stats.alerts?.unacked ?? 0 }} 条</span>
+          </div>
+          <div class="svc-item">
+            <span class="muted small">工作区占用</span>
+            <span class="num">{{ stats.storage?.workspace_mb ?? '—' }} MB</span>
+            <span class="muted small">磁盘剩余 {{ fmtGb(stats.storage?.disk_free_bytes) }}</span>
+          </div>
+          <div class="svc-item" v-for="a in stats.assets || []" :key="a.asset_id">
+            <span class="muted small">{{ a.asset_id }} · 快照/上限</span>
+            <span class="num">{{ a.snapshot_count }} / {{ a.snapshot_cap }}</span>
+            <span class="muted small">审计 {{ a.runlog_rows }} / {{ a.runlog_cap }} 行</span>
+          </div>
+        </div>
+        <div v-else class="muted small" style="padding:8px 0">观测数据不可用</div>
       </el-card>
 
       <el-card shadow="never" class="wide">

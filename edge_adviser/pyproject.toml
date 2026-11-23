@@ -1,6 +1,6 @@
 [project]
 name = "edge-adviser"
-version = "0.4.3"
+version = "0.4.4"
 description = "Edge-deployed equipment intelligence agent built on nanobot."
 requires-python = ">=3.11"
 dependencies = [
@@ -9,6 +9,10 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "sse-starlette>=2.0",
+    # direct imports that were previously satisfied transitively by nanobot —
+    # a Docker install must not depend on another package's dependency tree
+    "loguru>=0.7",
+    "aiohttp>=3.9",
 ]
 
 [project.scripts]

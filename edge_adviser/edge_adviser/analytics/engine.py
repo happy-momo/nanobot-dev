@@ -133,11 +133,13 @@ def _finite_floats(values: list[Any]) -> list[float]:
 
 
 def _band_exceedance(values: np.ndarray, lo: float | None, hi: float | None,
-                     persist: int, crit: bool) -> tuple[int, int, int]:
-    """Return (runs_over, runs_under, total_exceed_samples).
+                     persist: int, crit: bool) -> tuple[int, int, int, int]:
+    """Return (runs_over, runs_under, over_samples, under_samples).
 
     A run is a contiguous span of `persist`+ samples beyond the band — this is
     the "persistence" that keeps fleeting single-sample noise from alarming.
+    ``crit`` only marks the caller's band tier (kept for readability at call
+    sites); band logic itself is identical.
     """
     vals = np.asarray(values, dtype=np.float64)
     over = np.zeros(vals.shape, dtype=bool) if hi is None else np.greater(vals, hi)
@@ -371,17 +373,25 @@ def sanitize_samples(samples: list[dict[str, Any]],
 
 
 def analyze(asset: AssetSpec, samples: list[dict[str, Any]], *,
-            source: str = "", regime: str = "clean") -> AnalyticsSnapshot:
+            source: str = "", regime: str = "clean",
+            window_start: str | None = None,
+            window_end: str | None = None) -> AnalyticsSnapshot:
     """Analyze a window of samples into an AnalyticsSnapshot.
 
     Samples pass through the hygiene pipeline first (sort / dedup / window
     clip); all statistics, coverage and window bounds are computed over the
     sanitized batch. Window bounds default to the sanitized data's own first
     and last timestamps when not supplied by the caller.
+
+    ``window_start``/``window_end`` — when the caller knows the requested pull
+    window (the scheduler always does), passing it makes the clip real: rows
+    outside the window (a source that ignores start/end, device clock skew)
+    are dropped instead of inflating coverage or pushing window_end into the
+    future. Without them, clipping is a no-op and hygiene still sorts/dedups.
     """
     # hygiene first: sort by real time, dedup timestamps, clip out-of-window
     # rows. All statistics / coverage / window bounds below use the clean batch.
-    samples, hygiene = sanitize_samples(samples)
+    samples, hygiene = sanitize_samples(samples, window_start, window_end)
     dropped = (hygiene["dropped_unparseable_ts"] + hygiene["dropped_duplicates"]
                + hygiene["dropped_out_of_window"])
     ts_strings = [s.get("ts", "") for s in samples]
@@ -532,7 +542,7 @@ def empty_snapshot(asset: AssetSpec, now: datetime | None = None,
     """A snapshot-like dict for an empty window.
 
     Used by the scheduler when a pull returns no samples: it still archives an
-    OFFICE-style callable record (for audit + feeding the state machine) instead
+    auditable record (for audit + feeding the state machine) instead
     of silently dropping the window. No metrics, overall UNKNOWN, coverage 0.
     """
     now = now or datetime.now(timezone.utc)

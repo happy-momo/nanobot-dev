@@ -315,9 +315,9 @@ export const useRuntime = defineStore('runtime', {
         else this.conn = 'reconnecting'
         if (st === 'open') {
           // one shared resync per tick; both streams open on startup
-          const dirty = (this._resyncDirty = true)
+          this._resyncDirty = true
           window.setTimeout(() => {
-            if (!this._resyncDirty || !dirty) return
+            if (!this._resyncDirty) return
             this._resyncDirty = false
             this.loadOverview(true).catch(() => { /* next reconnect retries */ })
             this.loadAlerts().catch(() => { /* next reconnect retries */ })

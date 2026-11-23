@@ -85,9 +85,19 @@ class QAEngine:
             blocks.append(cb)
 
         prompt = _QA_SYSTEM + "\n\n" + _QA_PROMPT.format(question=question)
-        return await self.gateway.run(
+        result = await self.gateway.run(
             prompt,
             role=role,
             session_key=asset_session(asset.asset_id, "qa"),
             blocks=blocks,
         )
+        # attach the provenance of the snapshot this answer was built from so
+        # the HMI badge reflects the data actually used, not live telemetry
+        if snapshot:
+            result.snapshot_meta = {
+                "window_end": snapshot.get("window_end", ""),
+                "trust": snapshot.get("trust", ""),
+                "status": snapshot.get("status", ""),
+                "overall_level": snapshot.get("overall_level", ""),
+            }
+        return result

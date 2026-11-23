@@ -31,6 +31,9 @@ const input = ref('')
 const busy = ref(false)
 const listEl = ref<HTMLElement>()
 const copied = ref(false)
+// operator override: answer from the latest (possibly stale) snapshot instead
+// of refusing — surfaced as an explicit toggle so the default stays strict
+const allowStale = ref(false)
 
 const messages = computed<Msg[]>(() => threads.value[assetId.value] || [])
 
@@ -54,22 +57,20 @@ async function send(q?: string) {
     else { ElMessage.warning('尚无可用设备'); return }
   }
   const id = assetId.value
-  // capture trust AT ANSWER TIME — the badge must describe the data the answer
-  // was built from, not whatever the live snapshot says later (switching assets
-  // or a telemetry improvement would otherwise rewrite history, P0 fix)
-  const trustAtAnswer = rt.liveFor(id)?.trust
-    || rt.assetById(id)?.runtime.trust || 'none'
   if (!threads.value[id]) threads.value[id] = []
   threads.value[id].push({ role: 'user', text: question, ts: Date.now() })
   if (q === undefined) input.value = ''
   busy.value = true
   scroll()
   try {
-    const r = await api.post<any>(`/api/assets/${id}/ask`, { question })
+    const r = await api.post<any>(`/api/assets/${id}/ask`, { question, allow_stale: allowStale.value })
     if (r && r.content) {
       threads.value[id].push({
         role: 'assistant', text: r.content,
-        meta: { ...r, trust: (r.trust as string) || trustAtAnswer },
+        // trust from the snapshot the answer was ACTUALLY built from (backend
+        // echoes snapshot_meta); fall back to live telemetry only when absent
+        meta: { ...r, trust: r.snapshot?.trust || rt.liveFor(id)?.trust
+          || rt.assetById(id)?.runtime.trust || 'none' },
         ts: Date.now(),
       })
     } else if (r && r.error) {
@@ -156,6 +157,8 @@ function onEnter(e: KeyboardEvent) {
 
           <div v-if="m.meta && !isRefused(m) && !isError(m)" class="meta-row muted">
             <TrustBadge :trust="m.meta.trust || trustNow" />
+            <span v-if="m.meta.snapshot?.window_end"
+                  :title="'答案所依据快照时间'">基于 {{ relativeTime(new Date(m.meta.snapshot.window_end).getTime()) }}</span>
             <span>⚙ provider={{ m.meta.used_provider || '—' }}</span>
             <el-tag :type="m.meta.degraded ? 'warning' : 'success'" size="small">
               {{ m.meta.degraded ? '已降级' : '本地/原模型' }}
@@ -182,6 +185,12 @@ function onEnter(e: KeyboardEvent) {
         :disabled="busy"
       />
       <el-button type="primary" @click="send()" :loading="busy">发送</el-button>
+    </div>
+    <div class="opts-row">
+      <el-tooltip content="默认只基于新鲜快照回答；开启后无新鲜数据时改用最近快照（答案会标注其时间与可信度）"
+                  placement="top">
+        <el-checkbox v-model="allowStale">允许使用旧数据（无新鲜快照时不拒绝）</el-checkbox>
+      </el-tooltip>
     </div>
   </div>
 </template>
@@ -215,4 +224,5 @@ function onEnter(e: KeyboardEvent) {
 .when { font-size: 11px; margin-top: 4px; }
 .input-row { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
 .input-row .el-button { height: 54px; }
+.opts-row { margin-top: 6px; }
 </style>

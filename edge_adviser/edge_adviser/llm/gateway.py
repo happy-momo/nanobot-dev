@@ -34,6 +34,11 @@ class LLMResult:
     error: str | None = None
     usage: dict = field(default_factory=dict)
     parsed_json: Any = None
+    # provenance of the snapshot the answer was actually built from — the UI
+    # trust badge must describe this, not whatever the live telemetry says at
+    # render time (a fresh snapshot after the answer would rewrite history).
+    # Populated by QAEngine/report paths that pass a read gate.
+    snapshot_meta: dict = field(default_factory=dict)
 
 
 class LLMGateway:

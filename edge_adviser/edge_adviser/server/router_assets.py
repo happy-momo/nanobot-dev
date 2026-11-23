@@ -231,9 +231,15 @@ async def patch_thresholds(request: Request, asset_id: str, key: str,
     if merged["crit_min"] is not None and merged["crit_max"] is not None \
             and merged["crit_min"] > merged["crit_max"]:
         return fail("crit_min must be <= crit_max")
-    if merged["warn_max"] is not None and merged["crit_min"] is not None \
+    # warn/crit overlap: the normal layout is crit ABOVE warn (high-side trip),
+    # but a low-side trip (crit band below warn, e.g. pressure collapse) is a
+    # legitimate configuration — reject only genuine overlap, where crit and
+    # warn bands intersect, which would make the level derivation ambiguous.
+    if merged["warn_min"] is not None and merged["crit_max"] is not None \
+            and merged["crit_max"] > merged["warn_min"] \
+            and merged["crit_min"] is not None and merged["warn_max"] is not None \
             and merged["crit_min"] < merged["warn_max"]:
-        return fail("crit_min must be >= warn_max (crit band above warn band)")
+        return fail("crit band overlaps warn band; use crit above or below warn")
 
     cfg_path = _find_config_file(state)
     if cfg_path is None:

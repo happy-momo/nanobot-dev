@@ -1,0 +1,42 @@
+# EdgeAdviser — single-container deployment for an edge host.
+#
+#   docker compose up -d
+#
+# Files expected next to this compose file:
+#   ./config.json   — the adviser config (copy from config.sample.json and edit)
+#   ./data/         — created automatically; holds snapshots/reports/knowledge
+#
+# NOTE on threshold editing: the HMI's threshold PATCH writes back to the
+# config file. The mount below is therefore read-write; if you disable that
+# feature or prefer immutability, switch to `:ro`.
+
+services:
+  edge-adviser:
+    build:
+      context: ..
+      dockerfile: edge_adviser/Dockerfile
+    image: edge-adviser:latest
+    container_name: edge-adviser
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.json:/app/config.json
+      - ./data:/data
+    environment:
+      # workspace override: keeps all state on the mounted volume regardless
+      # of what config.json says
+      - EDGE_ADVISER_WORKSPACE=/data
+      # optional: point the online provider at an intranet gateway without
+      # touching the config file
+      # - HTTPS_PROXY=http://proxy.plant.local:3128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # keep the container lightweight on shared edge hosts
+    deploy:
+      resources:
+        limits:
+          memory: 1g

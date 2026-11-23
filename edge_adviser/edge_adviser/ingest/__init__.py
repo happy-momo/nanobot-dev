@@ -13,12 +13,25 @@ _source_classes = {
 
 
 def create_source(spec) -> DataSource:
-    """Build a data source from a SourceSpec."""
+    """Build a data source from a SourceSpec.
+
+    Unknown kinds raise ValueError; unwired protocol skeletons raise
+    NotImplementedError (directly or via the ABC TypeError when ``pull`` is
+    unimplemented) — both are "configured but not available" and must be loud
+    at startup, never a silent no-op source.
+    """
     try:
         cls = _source_classes[spec.kind.value]
-    except KeyError:
+    except (KeyError, AttributeError):
         raise ValueError(f"unknown source kind: {spec.kind}") from None
-    return cls(spec)
+    try:
+        return cls(spec)
+    except TypeError as exc:
+        if "abstract" in str(exc):
+            raise NotImplementedError(
+                f"{spec.kind.value} source is a skeleton (abstract pull); "
+                "wire the protocol client before use") from exc
+        raise
 
 
 __all__ = [

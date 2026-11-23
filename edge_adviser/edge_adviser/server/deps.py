@@ -105,6 +105,13 @@ def build_state(config_path: str | Path, gateway: Any | None = None,
     if not cfg.workspace.is_absolute():
         base = Path(config_path).resolve().parent
         cfg.workspace = (base / cfg.workspace).resolve()
+    # Container deployments point the workspace at a mounted volume without
+    # editing the config: EDGE_ADVISER_WORKSPACE overrides whatever the file says
+    # (same rule as cli._build — both entry points honor the override).
+    import os
+    env_ws = os.environ.get("EDGE_ADVISER_WORKSPACE")
+    if env_ws:
+        cfg.workspace = Path(env_ws)
     store = AssetStore(cfg.workspace)
     for asset in cfg.assets:
         store.ensure_asset(asset)

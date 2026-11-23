@@ -4,6 +4,58 @@
 
 ---
 
+## 0.4.4 — 2026-11-23（P1 修复 + 事件循环健康 + 可观测性 + 部署形态 + 数据源加固）
+
+一次"从功能完整到可交付"的迭代：修掉审查发现的 4 个 P1 / 4 个 P2,把 CPU/IO 移出事件循环,新增舰队级观测端点,补齐 Docker/systemd 部署形态,为真实数据源接入铺路。测试 137 → **156**。
+
+### P1 修复（可信度/安全）
+
+- **窗口裁剪真正生效**：`analyze()` 新增 `window_start/window_end` 参数,scheduler 与 demo seeder 传入真实拉取窗口——此前 `sanitize_samples` 的裁剪是死参数,设备时钟偏移产生的越界/未来时间戳样本仍虚增 coverage（未来 window_end 会被门禁判 stale 兜住,但统计被污染）。`sample_hygiene_dropped` 现在包含真正的越界行。
+- **CSV 公式注入防护**：runlog CSV 导出对 `=`/`+`/`-`/`@` 开头的字段前置引号——ack/feedback 附注是操作员自由文本,`=cmd()` 进 Excel/WPS 会作为公式执行。
+- **车队批量确认不再污染知识**：全场 ack 只为实际确认了告警的资产写"告警处理"反馈——此前 note 非空时每个资产无条件记录,无关设备的学习上下文被注入不相干的处置文本。runlog 也按资产区分 n。
+- **告警账本并发保护**：per-asset `asyncio.Lock` 串行化 ack 与 ingest 的读改写——此前批量确认与新告警落盘交错时可能互相覆盖（刚触发的告警丢失/确认被回滚）。`publish_alert` 走 `ingest_alert_async`。
+
+### P2 修复
+
+- **低侧 critical 合法化**：阈值校验从"crit_min 必须 ≥ warn_max"改为"仅拒绝 warn/crit 带真正重叠"——压力塌陷等低侧跳车（crit 带整体低于 warn 带）此前被错误拒绝。
+- **ask 返回快照溯源**：`LLMResult.snapshot_meta` 携带答案所依据快照的 `window_end/trust/status/overall_level`,ask 响应透传 `snapshot` 字段;QA 页徽章显示真实依据（含"基于 X 分钟前"）,不再用提问时刻的 live trust 近似。
+- **allow_stale 暴露**：QA 页新增"允许使用旧数据"开关（默认严格拒绝不变）——后端一直支持操作员显式覆盖门禁,前端此前从未暴露。
+- 清理：`_band_exceedance` 返回注解 3→4 元组、runtime.ts 重同步死条件、docstring 笔误。
+
+### 事件循环健康
+
+- **analyze（numpy 统计）与快照/retention 文件 IO 移入 `asyncio.to_thread`**——多资产/大窗口时调度循环不再阻塞 SSE 心跳与 API 处理器;`_archive_empty`/`_save_and_prune_async` 同步转 async。
+
+### 可观测性（新端点 `/api/stats`）
+
+- **模型成效**：调用数/成功数/成功率/平均与最大耗时——从审计 runlog 推导（qa/deep_report/learn/monitor）,**门禁拒绝不计入成功率**（gated 意味着模型未被调用）;单独计数 gated_refusals。
+- **告警响应**：MTTA（确认时长均值,acked_at-ts）全场与分资产、未确认数。
+- **存储**：每资产快照数/上限、审计行数/上限、目录字节数;工作区总占用与磁盘剩余。
+- Settings 页新增"运行观测"卡片（成功格式化率、MTTA 分钟/秒自适应、GB/MB 自适应）。全部只读,无新持久化状态。
+
+### 部署形态（新增 `deploy/`）
+
+- **多阶段 Dockerfile**：Node 编译 webui → slim Python 3.11 运行时（运行层无 Node）,HEALTHCHECK 打真实 `/api/health`,静态 HMI 由 FastAPI 托管。
+- **docker-compose**：workspace 卷挂载（`./data` ↔ `/data`）、1GB 内存上限、日志轮转。
+- **systemd unit**：`ProtectSystem=strict` + `ReadWritePaths` 白名单,适配无 Docker 的老工控机。
+- **`EDGE_ADVISER_WORKSPACE` 环境变量**：CLI 与 web 两个入口统一支持,容器部署不改配置即可把工作区指到挂载卷。
+- **部署指南**（deploy/README.md）：两种形态对照、升级/回滚、上线前 5 分钟验证清单。
+- pyproject 显式声明 `loguru`/`aiohttp`（此前靠 nanobot 传递带入,镜像安装会碎）;版本 0.4.3 → 0.4.4。
+
+### 数据源加固
+
+- **REST ingest 契约收紧**：非数组 payload（错误页/envelope）抛 `ValueError` 拒绝——此前 `list(dict)` 会把字典键当样本。
+- **工厂诚实失败**：mqtt/opcua/modbus 骨架构造的 ABC `TypeError` 归一化为 `NotImplementedError`;未知 kind 的 `AttributeError` 归一化为 `ValueError`。
+- **未接线源落审计**：Supervisor 启动时对"配置了但未接线"的源写 runlog（`source_unwired`）——"资产配了却从没采集"从只出现在日志变为审计可查。
+
+### 新测试（+19）
+
+- `test_stats.py`（4）：provider 成功率/耗时（gated 排除）、MTTA、存储与上限、冷工作区骨架。
+- `test_ingest.py`（7）：REST 窗口参数/HTTP 错误/非数组拒绝/凭证头过滤/会话幂等;工厂三种未接线 kind 与未知 kind。
+- `test_e2e_flow.py`（4,全流程）：① 采集→分析（真引擎 spike 超 crit 带）→告警→ack 附注→反馈台账→审计→dedup;② QA 门禁拒绝（模型未调用）→溯源回答→allow_stale 仅剩旧数据时生效;③ 阈值 PATCH 同一分析立即生效（verdict 翻转）+审计;④ 断连 4 窗→OFFLINE→data-fault 告警→确认→/api/stats MTTA 落数。
+
+---
+
 ## 0.4.3 — 2026-11-21（UX 工作流闭环：告警处理链 + 审计补全 + 设备中心 + 阈值在线编辑）
 
 围绕"操作员工作流"的一次系统性升级。0.4.2 修完事实层可信性后,这一版把**告警→处理→知识**的闭环真正接通,并把审计契约补全到每个状态变更动作。

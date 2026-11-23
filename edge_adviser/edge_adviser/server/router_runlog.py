@@ -94,14 +94,29 @@ async def export_runlog_csv(request: Request, asset_id: str) -> Any:
     writer = csv.writer(buf)
     writer.writerow(["timestamp", "date", "kind", "outcome", "reason", "detail", "actor"])
     for r in rows:
-        writer.writerow([r.get("timestamp", ""), r.get("date", ""), r.get("kind", ""),
-                         r.get("outcome", ""), r.get("reason", ""),
-                         (r.get("detail") or "").replace("\n", " "),
-                         r.get("actor", "")])
+        writer.writerow([_csv_safe(r.get("timestamp", "")), _csv_safe(r.get("date", "")),
+                         _csv_safe(r.get("kind", "")),
+                         _csv_safe(r.get("outcome", "")), _csv_safe(r.get("reason", "")),
+                         _csv_safe((r.get("detail") or "").replace("\n", " ")),
+                         _csv_safe(r.get("actor", ""))])
     return PlainTextResponse(
         buf.getvalue(), media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition":
                  f'attachment; filename="{asset_id}-runlog.csv"'})
+
+
+def _csv_safe(v: Any) -> Any:
+    """Neutralize CSV formula injection.
+
+    Note/feedback fields are operator free-text that lands in the audit ledger;
+    opened in Excel/WPS, a cell starting with ``=``/``+``/``-``/``@`` evaluates
+    as a formula (=cmd() etc). Prefixing a quote renders it inert while normal
+    text passes through untouched.
+    """
+    s = str(v)
+    if s[:1] in ("=", "+", "-", "@"):
+        return "'" + s
+    return s
 
 
 @router.get("/assets/{asset_id}/alerts")
@@ -128,7 +143,7 @@ async def ack_alert(request: Request, asset_id: str, ts: float, body: AckIn | No
     started = time.time()
     note = (body.note.strip() if body and body.note else "")
     from .alerts import acknowledge
-    ok_res = acknowledge(state, asset_id, ts, note=note)
+    ok_res = await acknowledge(state, asset_id, ts, note=note)
     # audit: who acknowledged what, when, and (optionally) how it was handled.
     # Without this row, "who confirmed the 03:00 critical" is unanswerable.
     from ..core.runlog import log_run_event
@@ -158,7 +173,7 @@ async def ack_all(request: Request, asset_id: str, body: AckAllIn | None = None)
     subject = body.subject if body and body.subject else None
     note = (body.note.strip() if body and body.note else "")
     from .alerts import acknowledge_many
-    n = acknowledge_many(state, asset_id, subject=subject, note=note)
+    n = await acknowledge_many(state, asset_id, subject=subject, note=note)
     from ..core.runlog import log_run_event
     log_run_event(state.store, asset_id, "ack", "ok" if n else "no_data",
                   reason=f"bulk n={n}" + (f" subject={subject}" if subject else "")
@@ -178,13 +193,19 @@ async def ack_all_fleet(request: Request, body: AckAllIn | None = None) -> Any:
     note = (body.note.strip() if body and body.note else "")
     from .alerts import acknowledge_many
     total = 0
-    for asset in state.config.assets:
-        total += acknowledge_many(state, asset.asset_id, subject=subject, note=note)
-        if note:
-            state.feedback.record(asset.asset_id,
-                                  f"【告警处理】批量确认{('[' + subject + ']') if subject else ''}：{note}")
     from ..core.runlog import log_run_event
     for asset in state.config.assets:
-        log_run_event(state.store, asset.asset_id, "ack", "ok" if total else "no_data",
-                      reason=f"fleet-bulk n={total}", elapsed_s=round(time.time() - started, 3))
+        n = await acknowledge_many(state, asset.asset_id, subject=subject, note=note)
+        total += n
+        # the handling note must only feed the learn loop for assets that
+        # actually had alerts acknowledged — a blanket record would inject
+        # unrelated "handling" text into every asset's knowledge base
+        if n and note:
+            state.feedback.record(
+                asset.asset_id,
+                f"【告警处理】批量确认 {n} 条{('[' + subject + ']') if subject else ''}：{note}")
+        log_run_event(state.store, asset.asset_id, "ack",
+                      "ok" if n else "no_data",
+                      reason=f"fleet-bulk n={n}",
+                      elapsed_s=round(time.time() - started, 3))
     return ok(data={"acked": total})

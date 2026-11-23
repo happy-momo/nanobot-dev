@@ -47,6 +47,12 @@ def _build(config_path: str | Path) -> "Context":
     if not config.workspace.is_absolute():
         base = Path(config_path).resolve().parent
         config.workspace = (base / config.workspace).resolve()
+    # Container deployments point the workspace at a mounted volume without
+    # editing the config: EDGE_ADVISER_WORKSPACE overrides whatever the file says.
+    import os
+    env_ws = os.environ.get("EDGE_ADVISER_WORKSPACE")
+    if env_ws:
+        config.workspace = Path(env_ws)
     store = AssetStore(config.workspace)
     for asset in config.assets:
         store.ensure_asset(asset)

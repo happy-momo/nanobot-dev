@@ -65,6 +65,7 @@ from .router_assets import router as assets_router
 from .router_overview import router as overview_router
 from .router_reports import router as reports_router
 from .router_runlog import router as runlog_router
+from .router_stats import router as stats_router
 from .security import load_or_create_secret, token_for, verify_token, PinRateLimiter
 
 _DIST = Path(__file__).resolve().parent.parent.parent / "webui" / "dist"
@@ -200,6 +201,7 @@ def create_app(config_path: str | Path, gateway: Any | None = None,
     app.include_router(runlog_router)
     app.include_router(overview_router)
     app.include_router(actions_router)
+    app.include_router(stats_router)
 
     if state.config.demo and not pin_enabled:
         # Demo mode ships with hmi_pin="none" — every write endpoint would be

@@ -14,6 +14,8 @@ _HERE = Path(__file__).resolve().parent.parent / "edge_adviser"
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+import pytest  # noqa: E402
+
 import edge_adviser.server.alerts as alerts  # noqa: E402
 
 
@@ -56,7 +58,8 @@ def test_healthy_info_does_not_alert() -> None:
     assert alerts.derive_alert("pump1", _snap(status="healthy", level="info")) is None
 
 
-def test_dedup_one_active_alert_per_subject(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_dedup_one_active_alert_per_subject(tmp_path: Path) -> None:
     """Repeated warn snapshots produce one alert until acknowledged."""
     from edge_adviser.server.deps import AppState
     from edge_adviser.core.asset_store import AssetStore
@@ -80,12 +83,13 @@ def test_dedup_one_active_alert_per_subject(tmp_path: Path) -> None:
     assert len(persisted) == 2
 
     # ack the warn -> frees the key so a new warn alerts again
-    assert alerts.acknowledge(state, "pump1", first["ts"]) is True
+    assert await alerts.acknowledge(state, "pump1", first["ts"]) is True
     fresh = alerts.ingest_alert(state, "pump1", _snap(level="warn"))
     assert fresh is not None and fresh["subject"] == "warn"
 
 
-def test_acknowledge_sets_acked(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_acknowledge_sets_acked(tmp_path: Path) -> None:
     from edge_adviser.server.deps import AppState
     from edge_adviser.core.asset_store import AssetStore
     from edge_adviser.config.model import AdviserConfig
@@ -95,6 +99,6 @@ def test_acknowledge_sets_acked(tmp_path: Path) -> None:
     state = AppState(cfg, store, gateway=object())
     a = alerts.ingest_alert(state, "pump1", _snap(level="warn"))
     assert a is not None
-    alerts.acknowledge(state, "pump1", a["ts"])
+    await alerts.acknowledge(state, "pump1", a["ts"])
     recs = alerts.list_alerts(state, "pump1", include_acked=True)
     assert recs[0]["acked"] is True

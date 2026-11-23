@@ -46,6 +46,12 @@ class RestSource(DataSource):
         async with session.get(self.spec.url, params=params) as resp:
             resp.raise_for_status()
             data = await resp.json()
+        if not isinstance(data, list):
+            # a JSON object (error page, envelope) is a contract violation —
+            # refusing beats iterating a dict's keys as "samples"
+            raise ValueError(
+                f"rest source expected a JSON array of samples, got "
+                f"{type(data).__name__} from {self.spec.url}")
         return list(data)
 
     async def aclose(self) -> None:
