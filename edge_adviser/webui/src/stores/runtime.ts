@@ -216,9 +216,14 @@ export const useRuntime = defineStore('runtime', {
           const pin = await askPin()
           if (pin) {
             try {
-              const r = await api.post<any>('/api/auth/pin', { pin })
-              const tok = r?.data?.token
-              setToken(tok || '')
+              // POST /api/auth/pin → envelope {ok, data:{enabled, token}};
+              // http.ts unwraps the envelope, so the token rides on `r.token`.
+              // The old `r?.data?.token` read undefined off the already-unwrapped
+              // payload → setToken('') → every later call 401'd and the user was
+              // stuck re-prompting forever (carry-forward fix, Task 3 review).
+              const r = await api.post<{ enabled?: boolean; token?: string }>(
+                '/api/auth/pin', { pin })
+              setToken(r?.token || '')
               this.pinRequired = false
               await this.loadVersion()
               await this.loadOverview()
