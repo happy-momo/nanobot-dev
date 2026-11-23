@@ -3,7 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 // TEMPORARY (Task 1 scaffold): old views/ were deleted, so each route points at
 // the same inline stub. Paths, names and meta titles are unchanged — later
 // tasks swap `component` back to `() => import('../views/X.vue')` per view.
-const stub = () => Promise.resolve({ template: '<div />' })
+const stub = () => Promise.resolve({ render: () => null })
 
 const routes = [
   { path: '/', name: 'dashboard', component: stub, meta: { title: '总览' } },
