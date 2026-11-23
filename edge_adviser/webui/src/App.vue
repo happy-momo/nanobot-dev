@@ -84,6 +84,19 @@ setUnauthorizedHandler(async () => {
 })
 
 // --------------------------------------------------------------- lifecycle --
+function onVisibility() {
+  if (document.visibilityState === 'visible' && rt.ready) {
+    const staleMs = Date.now() - rt.lastEventAt
+    // nothing received in 60s (or ever) → full resync; SSE auto-reconnects.
+    // (Carry-forward fix: the previous shell had this listener but the Task 3
+    // shell never re-registered it — a woken tablet kept stale data forever.)
+    if (!rt.lastEventAt || staleMs > 60_000) {
+      rt.loadOverview(true).catch(() => { /* retry on next visibility */ })
+      rt.loadAlerts().catch(() => { /* retry on next visibility */ })
+    }
+  }
+}
+
 onMounted(async () => {
   window.addEventListener('resize', onResize)
   document.addEventListener('visibilitychange', onVisibility)
@@ -91,17 +104,6 @@ onMounted(async () => {
   // full snapshot with sparkline series once the shell is up
   await rt.loadOverview(true).catch(() => { /* streams resync on reconnect */ })
 })
-
-function onVisibility() {
-  if (document.visibilityState === 'visible' && rt.ready) {
-    const staleMs = Date.now() - rt.lastEventAt
-    // nothing received in 60s (or ever) → full resync; SSE auto-reconnects
-    if (!rt.lastEventAt || staleMs > 60_000) {
-      rt.loadOverview(true).catch(() => { /* retry on next visibility */ })
-      rt.loadAlerts().catch(() => { /* retry on next visibility */ })
-    }
-  }
-}
 
 onBeforeUnmount(() => {
   rt.stopStreams()
