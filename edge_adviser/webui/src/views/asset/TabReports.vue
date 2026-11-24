@@ -58,6 +58,10 @@ async function loadList(): Promise<void> {
     const rows = await fetchReports(props.assetId)
     if (mySeq !== seq) return
     list.value = Array.isArray(rows) ? (rows as ReportListRow[]) : []
+    // clear the list spinner BEFORE awaiting open(): open() takes its own seq
+    // ticket, which would strand this guard and leave the reload button
+    // disabled forever (the detail pane has its own loadingDetail state)
+    loadingList.value = false
     // open the newest day by default; keep the current selection if it survives
     const dates = list.value.map((r) => r.date)
     const target = dates.includes(selectedDate.value)

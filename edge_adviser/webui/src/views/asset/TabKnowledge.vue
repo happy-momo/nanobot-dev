@@ -91,8 +91,16 @@ function claimStatus(s?: string): { label: string; tone: 'ok' | 'warn' | 'crit' 
   return { label: s || '未知', tone: 'dim' }
 }
 
-const claimText = (c: ClaimRec): string =>
-  c.claim || c.text || c.heading || '(无正文)'
+const claimText = (c: ClaimRec): string => {
+  // production `text` duplicates its heading prefix (memory_service writes
+  // title + " " + body); trim it so the heading isn't shown twice
+  if (c.claim) return c.claim
+  if (c.text) {
+    return c.heading && c.text.startsWith(c.heading + ' ')
+      ? c.text.slice(c.heading.length + 1) : c.text
+  }
+  return c.heading || '(无正文)'
+}
 const claimWhen = (c: ClaimRec): string =>
   (c.ts || c.created_at || '').slice(0, 19).replace('T', ' ')
 
