@@ -19,6 +19,29 @@ const COLORS = {
   crit: '#FF6B5E',     // --crit
 }
 
+/**
+ * Hex palette for ECharts option objects. Canvas cannot read CSS custom
+ * properties, and only this theme layer may hardcode hexes (same-source
+ * contract with tokens.css — meta.ts does the same for badge colors).
+ * Band tints are the spec-mandated 7% alpha (§5.2: warn rgba(245,184,76,.07) /
+ * crit rgba(255,107,94,.07)); the fill under the line is a cyan wash.
+ */
+export const EA_COLORS = {
+  textHi: COLORS.textHi,
+  text: COLORS.text,
+  textDim: COLORS.textDim,
+  line: COLORS.line,
+  line2: COLORS.line2,
+  cyan: COLORS.cyan,
+  ok: COLORS.ok,
+  warn: COLORS.warn,
+  crit: COLORS.crit,
+  cyanArea: 'rgba(59,224,216,0.10)',
+  okBand: 'rgba(61,220,151,0.05)',
+  warnBand: 'rgba(245,184,76,0.07)',
+  critBand: 'rgba(255,107,94,0.07)',
+} as const
+
 echarts.registerTheme('ea-obs', {
   backgroundColor: 'transparent',
   color: [COLORS.cyan, COLORS.ok, COLORS.warn, COLORS.crit, COLORS.text],

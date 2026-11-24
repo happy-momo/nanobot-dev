@@ -44,3 +44,23 @@ export const trustMeta: Record<TrustLevel, { color: string; label: string }> = {
   medium: { color: '#F5B84C', label: '中可信' },
   low:    { color: '#FF6B5E', label: '低可信' },
 }
+
+/**
+ * Threshold-band spec for ONE metric — the chart/band consumers' view of the
+ * backend MetricSpec (server/schemas.py `metric_to_dict`, mirrored by the
+ * runtime store's MetricSpec). Bands are one-sided on purpose: a value may only
+ * have warn_max (pump1 temp 警告>68), so every field is optional and nullable.
+ * Consumed by MetricChart (markArea bands + dashed threshold lines) and
+ * MetricBand (horizontal threshold strip).
+ */
+export interface MetricSpecMeta {
+  key: string
+  unit?: string
+  description?: string
+  norm_min?: number | null
+  norm_max?: number | null
+  warn_min?: number | null
+  warn_max?: number | null
+  crit_min?: number | null
+  crit_max?: number | null
+}
