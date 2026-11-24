@@ -42,7 +42,6 @@ const edges = computed(() => {
   const seen = new Set<number>()
   for (const v of raw) {
     if (typeof v !== 'number' || !Number.isFinite(v)) continue
-    const clamped = Math.min(Math.max(v, lo.value!), Math.max(hi.value!, v))
     const pos = ((v - lo.value!) / (hi.value! - lo.value!)) * 100
     if (pos < 0 || pos > 100 || seen.has(Math.round(pos * 100))) continue
     seen.add(Math.round(pos * 100))
@@ -51,7 +50,6 @@ const edges = computed(() => {
     const label = v === m.crit_min ? 'crit_min' : v === m.crit_max ? 'crit_max'
       : v === m.warn_min ? 'warn_min' : v === m.warn_max ? 'warn_max' : ''
     out.push({ pos, tone, label })
-    void clamped
   }
   return out.sort((a, b) => a.pos - b.pos)
 })

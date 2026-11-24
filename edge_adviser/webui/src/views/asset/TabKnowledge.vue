@@ -21,18 +21,30 @@ import TaskProgress from '../../components/TaskProgress.vue'
 const props = defineProps<{ assetId: string }>()
 
 // ------------------------------------------------------------------ shapes --
+// Ledger records come from TWO producers with different field spellings:
+// the demo seed (memory_claims/conflicts.jsonl: ts/reason/claim_id/claim/
+// source) and the production MemoryService.record_claims/_check_conflicts
+// (memory_service.py: created_at/heading/text/old/new). Read BOTH — a
+// one-spelling interface guts the honesty surface against the other writer.
 interface ClaimRec {
   id?: string
   claim?: string
+  text?: string
+  heading?: string
   ts?: string
+  created_at?: string
   status?: string
   source?: string
+  source_window?: string
 }
 interface ConflictRec {
   id?: string
   claim_id?: string
   reason?: string
+  old?: string
+  new?: string
   ts?: string
+  created_at?: string
   status?: string
 }
 interface KnowledgeDoc {
@@ -79,7 +91,10 @@ function claimStatus(s?: string): { label: string; tone: 'ok' | 'warn' | 'crit' 
   return { label: s || '未知', tone: 'dim' }
 }
 
-const claimText = (c: ClaimRec): string => c.claim || '(无正文)'
+const claimText = (c: ClaimRec): string =>
+  c.claim || c.text || c.heading || '(无正文)'
+const claimWhen = (c: ClaimRec): string =>
+  (c.ts || c.created_at || '').slice(0, 19).replace('T', ' ')
 
 /** learn gate: the config's gate mode + what it means for this asset */
 const gate = computed(() => {
@@ -214,10 +229,15 @@ watch(() => props.assetId, (v, o) => {
           <div v-for="(c, i) in conflicts" :key="`${c.id || ''}-${i}`" class="tk-conflict">
             <div class="tk-conflict-head">
               <span class="tk-tag tk-tag-superseded">已被取代</span>
-              <span class="tk-conflict-when mono">{{ (c.ts || '').slice(0, 19).replace('T', ' ') }}</span>
+              <span class="tk-conflict-when mono">
+                {{ (c.ts || c.created_at || '').slice(0, 19).replace('T', ' ') }}</span>
             </div>
             <p v-if="c.reason" class="tk-conflict-text">{{ c.reason }}</p>
-            <p v-else class="tk-conflict-text">声明 {{ c.claim_id || '—' }} 与当前数据冲突</p>
+            <p v-if="c.old" class="tk-conflict-old">旧: {{ c.old }}</p>
+            <p v-if="c.new" class="tk-conflict-new">新: {{ c.new }}</p>
+            <p v-if="!c.reason && !c.old && !c.new" class="tk-conflict-text">
+              声明 {{ c.claim_id || '—' }} 与当前数据冲突
+            </p>
           </div>
         </div>
         <EmptyState v-else label="无冲突记录" hint="学习过程未发现互相矛盾的声明" />
@@ -237,8 +257,10 @@ watch(() => props.assetId, (v, o) => {
                 }"
               >{{ claimStatus(c.status).label }}</span>
               <span v-if="c.source" class="tk-claim-title">{{ c.source === 'feedback' ? '来自反馈' : '来自学习' }}</span>
+              <span v-else-if="c.heading" class="tk-claim-title">{{ c.heading }}</span>
             </div>
             <p class="tk-claim-text">{{ claimText(c) }}</p>
+            <p v-if="claimWhen(c)" class="tk-claim-when mono">{{ claimWhen(c) }}</p>
           </div>
         </div>
         <EmptyState v-else label="暂无声明记录" hint="运行学习后会按章节登记声明" />
@@ -340,6 +362,7 @@ watch(() => props.assetId, (v, o) => {
 .tk-claim-title { font-size: 11px; color: var(--tx-hi); letter-spacing: .03em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tk-claim-text { margin: 5px 0 0; font-size: 11.5px; color: var(--tx); line-height: 1.55; }
+.tk-claim-when { margin: 3px 0 0; font-size: 9.5px; color: var(--tx-dim); }
 
 /* gate */
 .tk-gate { margin: 0; padding: 10px 14px 0; font-size: 12px; color: var(--cyan);

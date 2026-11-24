@@ -42,11 +42,15 @@ const trustLevel = computed<TrustLevel>(() => TRUST_KEY[String(m.value.trust || 
 const trustLabel = computed(() => trustMeta[trustLevel.value].label)
 const trustColor = computed(() => trustMeta[trustLevel.value].color)
 
-/** coverage arrives as a 0–1 fraction (backend); tolerate a percent form too */
-const coveragePct = computed(() => {
-  const v = Number(m.value.coverage) || 0
+/** coverage arrives as a 0–1 fraction (backend); tolerate a percent form too.
+ * Missing field renders "—" (a confident 0% would misstate the provenance). */
+const coveragePct = computed<string>(() => {
+  const raw = m.value.coverage
+  if (raw === undefined || raw === null || raw === '') return '—'
+  const v = Number(raw)
+  if (!Number.isFinite(v)) return '—'
   const p = v <= 1 ? v * 100 : v
-  return Math.round(Math.min(Math.max(p, 0), 100))
+  return String(Math.round(Math.min(Math.max(p, 0), 100)))
 })
 
 /** samples: actual vs expected — the honest denominator (badge.py carries both) */
@@ -109,7 +113,7 @@ const lowTrust = computed(() =>
       </div>
       <div class="sb-cell">
         <span class="sb-k">覆盖率</span>
-        <span class="sb-v">{{ coveragePct }}%</span>
+        <span class="sb-v">{{ coveragePct === '—' ? '—' : coveragePct + '%' }}</span>
       </div>
       <div class="sb-cell sb-wide">
         <span class="sb-k">时间窗</span>

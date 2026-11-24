@@ -78,7 +78,8 @@ async function loadList(): Promise<void> {
 }
 
 async function open(date: string): Promise<void> {
-  const mySeq = seq
+  const mySeq = ++seq   // own ticket: a click during loadList's auto-open must
+                        // not race it (selectedDate B with current A)
   selectedDate.value = date
   loadingDetail.value = true
   try {
@@ -177,40 +178,45 @@ watch(() => props.assetId, (v, o) => {
 
     <!-- ─── right: badge + body + actions ───────────────────────────────── -->
     <section class="tr-view">
+      <!-- actions: generation (cyan action) + downloads. The action row sits
+           OUTSIDE the `current` gate — on a fresh asset no archive exists yet,
+           and the first report must be generable from this tab (the old bug:
+           both empty-states pointed at a 生成报告 button that only rendered
+           after a report already existed). Downloads stay disabled without a
+           selected day; generation is always reachable. -->
+      <div v-if="!listError" class="tr-actions">
+        <TaskProgress label="生成报告" :run="() => triggerReport(props.assetId)" @done="onReportDone" />
+        <div class="tr-dl">
+          <button
+            type="button"
+            class="tr-btn"
+            :disabled="!selectedDate || downloading !== null"
+            @click="download('md')"
+          >
+            <Download :size="13" :stroke-width="1.5" />
+            <span>{{ downloading === 'md' ? '下载中…' : '下载 .md' }}</span>
+          </button>
+          <button
+            type="button"
+            class="tr-btn"
+            :disabled="!selectedDate || downloading !== null"
+            @click="download('json')"
+          >
+            <Download :size="13" :stroke-width="1.5" />
+            <span>{{ downloading === 'json' ? '下载中…' : '下载 .json' }}</span>
+          </button>
+        </div>
+      </div>
+
       <EmptyState
         v-if="!current && !loadingDetail && !listError"
         label="未选择报告"
-        hint="左侧选择日期，或生成新报告"
+        hint="左侧选择日期，或点击上方「生成报告」"
       />
 
       <template v-else-if="current">
         <!-- deterministic provenance (cyan) -->
         <ScopeBadge :meta="current.meta" />
-
-        <!-- actions: generation (cyan action) + downloads -->
-        <div class="tr-actions">
-          <TaskProgress label="生成报告" :run="() => triggerReport(props.assetId)" @done="onReportDone" />
-          <div class="tr-dl">
-            <button
-              type="button"
-              class="tr-btn"
-              :disabled="!selectedDate || downloading !== null"
-              @click="download('md')"
-            >
-              <Download :size="13" :stroke-width="1.5" />
-              <span>{{ downloading === 'md' ? '下载中…' : '下载 .md' }}</span>
-            </button>
-            <button
-              type="button"
-              class="tr-btn"
-              :disabled="!selectedDate || downloading !== null"
-              @click="download('json')"
-            >
-              <Download :size="13" :stroke-width="1.5" />
-              <span>{{ downloading === 'json' ? '下载中…' : '下载 .json' }}</span>
-            </button>
-          </div>
-        </div>
 
         <!-- AI content (violet frame): the report markdown itself -->
         <ObsPanel title="REPORT" :meta="current.date || selectedDate">
