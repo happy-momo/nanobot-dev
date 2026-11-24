@@ -12,7 +12,10 @@
          the chart backwards — deduped by window_end, re-sorted, capped at 60
        * each metric's series picks ONLY its own value (m.max ?? m.mean): the
          first-metric-only shape is an /api/overview sparkline artifact, not
-         something this tab should inherit. -->
+         something this tab should inherit
+       * a metrics-less backfill tick (loadOverview writes rt.live without a
+         metrics array) merges over the existing history row instead of
+         replacing it — replacing it would erase the chart point -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRuntime, type SnapshotPayload } from '../../stores/runtime'
@@ -24,7 +27,7 @@ import MetricChart from '../../components/MetricChart.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import type { MetricSpecMeta } from '../../theme/meta'
 
-const props = defineProps<{ assetId: string }>()
+const props = defineProps<{ assetId: string; refreshTick?: number }>()
 
 const rt = useRuntime()
 
@@ -118,13 +121,33 @@ async function loadHistory() {
 // on every snapshot event, so this watch fires per tick and merges the payload
 // (full per-metric arrays — not the overview's first-metric-only series) into
 // the chart history at its chronological position.
+// loadOverview also writes rt.live[assetId] (a metrics-less backfill row); when
+// such a payload lands on an existing history row, merge over it instead of
+// replacing it — a plain replace would drop that row's metrics and erase the
+// chart point for the window it covers.
 watch(live, (v) => {
   if (!v?.window_end || v.asset_id !== props.assetId) return
   const i = history.value.findIndex((r) => r.window_end === v.window_end)
-  if (i >= 0) history.value.splice(i, 1)
-  history.value.push({ ...v })
+  const incoming = { ...v }
+  if (i >= 0) {
+    const existing = history.value[i]
+    const hasMetrics = Array.isArray(incoming.metrics) && incoming.metrics.length > 0
+    history.value.splice(
+      i, 1,
+      hasMetrics ? incoming : { ...existing, ...incoming, metrics: existing.metrics },
+    )
+  } else {
+    history.value.push(incoming)
+  }
   history.value.sort((a, b) => (a.window_end || '').localeCompare(b.window_end || ''))
   history.value = history.value.slice(-60)
+})
+
+// 立即采集 without SSE (SSE down → no snapshot tick): the parent bumps
+// refresh-tick after the run completes, so reload history directly here.
+watch(() => props.refreshTick, (tick, prev) => {
+  if (tick === undefined || prev === undefined) return
+  loadHistory()
 })
 
 // ------------------------------------------------------------------- report --
@@ -371,7 +394,7 @@ watch(() => props.assetId, (v, o) => {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .al-ack { border: 1px solid var(--line-2); background: var(--bg2); color: var(--tx);
   font-size: 11px; padding: 4px 12px; border-radius: var(--r-s); cursor: pointer;
-  min-height: 28px; white-space: nowrap; }
+  min-height: 32px; white-space: nowrap; }
 .al-ack:hover { background: var(--bg3); border-color: var(--cyan-dim); color: var(--tx-hi); }
 .al-ack:disabled { opacity: .55; cursor: default; }
 .al-body { margin-top: 5px; font-size: 12px; color: var(--tx); line-height: 1.5; }
