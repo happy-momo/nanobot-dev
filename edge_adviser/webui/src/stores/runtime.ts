@@ -203,7 +203,7 @@ export const useRuntime = defineStore('runtime', {
     },
   },
   actions: {
-    async bootstrap(askPin: () => Promise<string | null>) {
+    async bootstrap(askPin: (error?: string) => Promise<string | null>) {
       this.loadError = ''
       try {
         await this.loadVersion()
@@ -213,23 +213,38 @@ export const useRuntime = defineStore('runtime', {
       } catch (e) {
         if (e instanceof UnauthorizedError) {
           this.pinRequired = true
-          const pin = await askPin()
-          if (pin) {
+          let authError = ''
+          while (true) {
+            const pin = await askPin(authError)
+            if (!pin) {
+              this.loadError = '需要 PIN 授权才能连接服务，请重试。'
+              break
+            }
+            let r: { enabled?: boolean; token?: string }
             try {
               // POST /api/auth/pin → envelope {ok, data:{enabled, token}};
               // http.ts unwraps the envelope, so the token rides on `r.token`.
               // The old `r?.data?.token` read undefined off the already-unwrapped
               // payload → setToken('') → every later call 401'd and the user was
               // stuck re-prompting forever (carry-forward fix, Task 3 review).
-              const r = await api.post<{ enabled?: boolean; token?: string }>(
-                '/api/auth/pin', { pin })
-              setToken(r?.token || '')
-              this.pinRequired = false
+              r = await api.post<{ enabled?: boolean; token?: string }>('/api/auth/pin', { pin })
+            } catch (pinError) {
+              this.pinRequired = true
+              authError = pinError instanceof Error
+                ? `PIN 验证失败：${pinError.message}`
+                : 'PIN 验证失败，请重试。'
+              continue
+            }
+            setToken(r?.token || '')
+            this.pinRequired = false
+            try {
               await this.loadVersion()
               await this.loadOverview()
               await this.loadAlerts()
-            } catch {
-              this.pinRequired = true
+              break
+            } catch (loadError) {
+              this.loadError = loadError instanceof Error ? loadError.message : String(loadError)
+              break
             }
           }
         } else {
@@ -243,9 +258,9 @@ export const useRuntime = defineStore('runtime', {
       this.ready = true
       this.startStreams()
     },
-    async retryBootstrap() {
-      await this.bootstrap(async () => null)
-      await this.loadOverview(true)
+    async retryBootstrap(askPin: (error?: string) => Promise<string | null>) {
+      await this.bootstrap(askPin)
+      if (!this.loadError) await this.loadOverview(true)
     },
     async loadVersion() {
       try {

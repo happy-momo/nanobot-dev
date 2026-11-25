@@ -93,11 +93,13 @@ function claimStatus(s?: string): { label: string; tone: 'ok' | 'warn' | 'crit' 
 
 const claimText = (c: ClaimRec): string => {
   // production `text` duplicates its heading prefix (memory_service writes
-  // title + " " + body); trim it so the heading isn't shown twice
+  // title + " " + body); trim it so the heading isn't shown twice. A bodyless
+  // section trims to '' — fall through instead of rendering an empty row.
   if (c.claim) return c.claim
   if (c.text) {
-    return c.heading && c.text.startsWith(c.heading + ' ')
+    const body = c.heading && c.text.startsWith(c.heading + ' ')
       ? c.text.slice(c.heading.length + 1) : c.text
+    if (body.trim()) return body
   }
   return c.heading || '(无正文)'
 }

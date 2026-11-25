@@ -164,7 +164,7 @@ function onEntry(name: string, isQa: boolean) {
 
 .rail-foot { display: flex; flex-direction: column; align-items: center; gap: 8px;
   padding: 6px 0 10px; }
-.role-btn { width: 26px; height: 26px; display: inline-flex; align-items: center;
+.role-btn { width: 32px; height: 32px; display: inline-flex; align-items: center;
   justify-content: center; border: 1px solid var(--line); border-radius: var(--r-s);
   background: transparent; color: var(--tx-dim); cursor: pointer; padding: 0; }
 .role-btn:hover { background: var(--bg2); color: var(--tx); }

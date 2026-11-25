@@ -45,8 +45,23 @@ const loadingMore = ref(false)
 const loadError = ref('')
 const nextBefore = ref<string | null>(null)
 const total = ref<number | null>(null)
-const fKind = ref(localStorage.getItem('ea_audit_kind') || '')
-watch(fKind, (v) => localStorage.setItem('ea_audit_kind', v || ''))
+function readKind(): string {
+  try {
+    return localStorage.getItem('ea_audit_kind') || ''
+  } catch {
+    return ''
+  }
+}
+function saveKind(v: string): void {
+  try {
+    localStorage.setItem('ea_audit_kind', v || '')
+  } catch {
+    // storage-disabled/private mode keeps the filter only for this session
+  }
+}
+
+const fKind = ref(readKind())
+watch(fKind, saveKind)
 
 const KINDS: Array<{ value: string; label: string }> = [
   { value: 'run_once', label: '采集' },

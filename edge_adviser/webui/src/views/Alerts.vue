@@ -42,12 +42,27 @@ declare module '@tanstack/table-core' {
 const rt = useRuntime()
 
 // --------------------------------------------------------------- filters --
-const fAsset = ref(localStorage.getItem('ea_alert_asset') || '')
-const fSeverity = ref(localStorage.getItem('ea_alert_sev') || '')
-const fAcked = ref(localStorage.getItem('ea_alert_acked') || 'open')
-watch(fAsset, (v) => localStorage.setItem('ea_alert_asset', v || ''))
-watch(fSeverity, (v) => localStorage.setItem('ea_alert_sev', v || ''))
-watch(fAcked, (v) => localStorage.setItem('ea_alert_acked', v))
+function readFilter(key: string, fallback = ''): string {
+  try {
+    return localStorage.getItem(key) || fallback
+  } catch {
+    return fallback
+  }
+}
+function saveFilter(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // private/storage-disabled mode keeps filters only for this session
+  }
+}
+
+const fAsset = ref(readFilter('ea_alert_asset'))
+const fSeverity = ref(readFilter('ea_alert_sev'))
+const fAcked = ref(readFilter('ea_alert_acked', 'open'))
+watch(fAsset, (v) => saveFilter('ea_alert_asset', v || ''))
+watch(fSeverity, (v) => saveFilter('ea_alert_sev', v || ''))
+watch(fAcked, (v) => saveFilter('ea_alert_acked', v))
 
 const severities = [
   { value: 'warn', label: '警告' },

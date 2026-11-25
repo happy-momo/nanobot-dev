@@ -21,6 +21,7 @@ import { api, setToken, setUnauthorizedHandler } from './api/http'
 import { toast } from './stores/toast'
 import AppRail from './components/AppRail.vue'
 import QaDrawer from './components/QaDrawer.vue'
+import PinDialog from './components/PinDialog.vue'
 import ToastHost from './components/ToastHost.vue'
 import type { AppRole } from './router'
 
@@ -30,14 +31,23 @@ const router = useRouter()
 
 // ---------------------------------------------------------------- role fold --
 const ROLE_KEY = 'ea_role'
-const role = ref<AppRole>(localStorage.getItem(ROLE_KEY) === 'operator'
-  ? 'operator'
-  : 'engineer')
+function readRole(): AppRole {
+  try {
+    return localStorage.getItem(ROLE_KEY) === 'operator' ? 'operator' : 'engineer'
+  } catch {
+    return 'engineer'
+  }
+}
+const role = ref<AppRole>(readRole())
 
 function setRole(r: AppRole) {
   if (role.value === r) return
   role.value = r
-  localStorage.setItem(ROLE_KEY, r)
+  try {
+    localStorage.setItem(ROLE_KEY, r)
+  } catch {
+    // storage can be unavailable in private mode; role stays valid for this session
+  }
   toast(r === 'operator' ? '已切换为【操作工】视图' : '已切换为【工程师】视图')
 }
 
@@ -62,26 +72,106 @@ function openQa(assetId?: string) {
 provide('openQa', openQa)
 
 // ------------------------------------------------------------- 401 re-entry --
-function askPin(): Promise<string | null> {
-  return Promise.resolve(window.prompt('请输入现场使用 PIN 码（访问控制）') || '')
+const pinOpen = ref(false)
+const pinBusy = ref(false)
+const pinError = ref('')
+let pinResolve: ((pin: string | null) => void) | null = null
+
+function askPin(message = ''): Promise<string | null> {
+  pinError.value = message
+  pinBusy.value = false
+  pinOpen.value = true
+  return new Promise((resolve) => { pinResolve = resolve })
 }
+
+function submitPin(pin: string) {
+  pinBusy.value = true
+  const resolve = pinResolve
+  pinResolve = null
+  resolve?.(pin)
+}
+
+function cancelPin() {
+  pinOpen.value = false
+  pinBusy.value = false
+  const resolve = pinResolve
+  pinResolve = null
+  resolve?.(null)
+}
+
+function closePinDialog() {
+  pinOpen.value = false
+  pinBusy.value = false
+  pinError.value = ''
+}
+
+watch(() => rt.pinRequired, (required) => {
+  if (!required) closePinDialog()
+})
 
 // Mid-session 401 (server restarted without its secret, token expired): drop
 // the stale token and re-run the PIN flow instead of letting every request
 // 401-loop. Same shape as the previous shell, element-free.
-setUnauthorizedHandler(async () => {
+let reauthPromise: Promise<void> | null = null
+let bootstrapDepth = 0
+
+async function duringBootstrap<T>(run: () => Promise<T>): Promise<T> {
+  bootstrapDepth++
   try {
-    rt.stopStreams()
-    const pin = await askPin()
-    if (!pin) return
-    const r = await api.post<{ token?: string }>('/api/auth/pin', { pin })
-    setToken(r?.token || '')
-    await rt.bootstrap(async () => null)   // token already set; no second prompt
-    await rt.loadOverview(true)
-  } catch {
-    // stay usable; the next 401 re-triggers the prompt
+    return await run()
+  } finally {
+    bootstrapDepth--
   }
+}
+
+function reauthenticate(): Promise<void> {
+  if (!reauthPromise) {
+    reauthPromise = runReauthentication().finally(() => { reauthPromise = null })
+  }
+  return reauthPromise
+}
+
+async function runReauthentication(): Promise<void> {
+  rt.stopStreams()
+  let authError = ''
+  while (true) {
+    const pin = await askPin(authError)
+    if (!pin) {
+      rt.loadError = '需要 PIN 授权才能连接服务，请重试。'
+      return
+    }
+    let r: { token?: string }
+    try {
+      r = await api.post<{ token?: string }>('/api/auth/pin', { pin })
+    } catch (e) {
+      rt.pinRequired = true
+      authError = e instanceof Error ? `PIN 验证失败：${e.message}` : 'PIN 验证失败，请重试。'
+      continue
+    }
+    setToken(r?.token || '')
+    rt.pinRequired = false
+    rt.loadError = ''
+    closePinDialog()
+    try {
+      await duringBootstrap(() => rt.bootstrap(async () => null)) // token already set
+      await rt.loadOverview(true)
+      return
+    } catch (e) {
+      rt.loadError = e instanceof Error ? e.message : String(e)
+      return
+    }
+  }
+}
+
+setUnauthorizedHandler(() => {
+  // bootstrap handles its own 401 and PIN flow; re-entry here would open a
+  // competing prompt and leave one of the authentication promises unresolved.
+  if (!bootstrapDepth) return reauthenticate()
 })
+
+async function retryBootstrap() {
+  await duringBootstrap(() => rt.retryBootstrap(askPin))
+}
 
 // --------------------------------------------------------------- lifecycle --
 function onVisibility() {
@@ -100,7 +190,7 @@ function onVisibility() {
 onMounted(async () => {
   window.addEventListener('resize', onResize)
   document.addEventListener('visibilitychange', onVisibility)
-  await rt.bootstrap(askPin)
+  await duringBootstrap(() => rt.bootstrap(askPin))
   // full snapshot with sparkline series once the shell is up
   await rt.loadOverview(true).catch(() => { /* streams resync on reconnect */ })
 })
@@ -149,13 +239,20 @@ function onNavigate(name: string) {
       <div v-if="rt.loadError" class="load-error">
         <span class="eyebrow">CONNECTION</span>
         <p class="le-msg">无法连接服务器：{{ rt.loadError }}</p>
-        <button type="button" class="le-retry" @click="rt.retryBootstrap()">重试</button>
+        <button type="button" class="le-retry" @click="retryBootstrap">重试</button>
       </div>
       <router-view v-else />
     </main>
   </div>
 
   <QaDrawer :open="qaOpen" :asset-id="qaAssetId" @close="qaOpen = false" />
+  <PinDialog
+    :open="pinOpen"
+    :busy="pinBusy"
+    :auth-error="pinError"
+    @submit="submitPin"
+    @cancel="cancelPin"
+  />
   <ToastHost />
 </template>
 

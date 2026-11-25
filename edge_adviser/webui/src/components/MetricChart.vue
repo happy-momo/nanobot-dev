@@ -53,7 +53,10 @@ const label = () => props.spec.key || 'metric'
 // same trick the old Monitor chart used, kept because it renders one-tone zones
 // without knowing the axis range). Outermost crit zones extend past the axis so
 // excursions above/below the last threshold still read as crit territory.
-interface AreaDatum { yAxis: [number, number]; itemStyle: { color: string } }
+type AreaDatum = [
+  { yAxis: number; itemStyle: { color: string } },
+  { yAxis: number },
+]
 
 function buildAreas(s: MetricSpecMeta): AreaDatum[] {
   const edges = [s.crit_min, s.warn_min, s.norm_min, s.norm_max, s.warn_max, s.crit_max]
@@ -67,23 +70,21 @@ function buildAreas(s: MetricSpecMeta): AreaDatum[] {
     return EA_COLORS.okBand  // healthy band: barely-there green wash
   }
   const areas: AreaDatum[] = []
+  const area = (min: number, max: number, color: string): AreaDatum => [
+    { yAxis: min, itemStyle: { color } },
+    { yAxis: max },
+  ]
   for (let i = 0; i < uniq.length - 1; i++) {
-    areas.push({
-      yAxis: [uniq[i], uniq[i + 1]],
-      itemStyle: { color: tone((uniq[i] + uniq[i + 1]) / 2) },
-    })
+    areas.push(area(uniq[i], uniq[i + 1], tone((uniq[i] + uniq[i + 1]) / 2)))
   }
   if (uniq.length >= 2) {
     const step = uniq[1] - uniq[0]
     const lastStep = uniq[uniq.length - 1] - uniq[uniq.length - 2]
     if (s.crit_min != null) {
-      areas.push({ yAxis: [uniq[0] - step * 6, uniq[0]], itemStyle: { color: EA_COLORS.critBand } })
+      areas.push(area(uniq[0] - step * 6, uniq[0], EA_COLORS.critBand))
     }
     if (s.crit_max != null) {
-      areas.push({
-        yAxis: [uniq[uniq.length - 1], uniq[uniq.length - 1] + lastStep * 6],
-        itemStyle: { color: EA_COLORS.critBand },
-      })
+      areas.push(area(uniq[uniq.length - 1], uniq[uniq.length - 1] + lastStep * 6, EA_COLORS.critBand))
     }
   }
   return areas
