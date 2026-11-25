@@ -200,7 +200,8 @@ async function confirm(): Promise<void> {
 </style>
 
 <style>
-/* overlay lives in the portal — unscoped, mirrors QaDrawer's pattern */
+/* overlay lives in the portal — flat dim, NO backdrop-filter (spec §1.1
+   reserves blur for the QA drawer overlay only) */
 .ad-ov { position: fixed; inset: 0; background: rgba(2, 5, 10, 0.6);
-  backdrop-filter: blur(2px); z-index: 79; }
+  z-index: 79; }
 </style>
