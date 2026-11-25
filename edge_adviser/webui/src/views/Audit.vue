@@ -254,7 +254,7 @@ const gapDays = computed<string[]>(() => {
           type="button"
           class="au-btn"
           :disabled="!assetId || loading"
-          aria-label="刷新审计"
+          aria-label="刷新记录"
           @click="load"
         >
           <RefreshCw :size="13" :stroke-width="1.5" :class="{ 'au-spin': loading }" />
@@ -273,7 +273,7 @@ const gapDays = computed<string[]>(() => {
 
     <!-- ─── table ────────────────────────────────────────────────────────── -->
     <ObsPanel
-      title="AUDIT — 审计账本"
+      title="操作记录"
       :meta="rt.assetById(assetId)?.name || assetId"
     >
       <EmptyState
@@ -293,12 +293,12 @@ const gapDays = computed<string[]>(() => {
           <thead>
             <tr>
               <th class="au-mono">时间</th>
-              <th>kind</th>
+              <th>操作</th>
               <th>结果</th>
-              <th>actor</th>
-              <th>reason</th>
+              <th>发起方</th>
+              <th>说明</th>
               <th class="au-mono au-num">耗时</th>
-              <th class="au-mono">window_end</th>
+              <th class="au-mono">数据时间</th>
             </tr>
           </thead>
           <tbody>

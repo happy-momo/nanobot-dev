@@ -1,17 +1,15 @@
 <script setup lang="ts">
 // AppRail — the 52px observatory navigation column (spec §2) + its <900px
-// bottom tab-bar form (touch targets ≥44px, spec §8). Purely presentational:
-// it receives role / conn / alerts / demo as props and reports intent through
-// emits; the app-level state (SSE, store, role persistence) lives in App.vue.
+// bottom tab-bar form (touch targets ≥44px, spec §8). It receives connection
+// and alert state as props and reports navigation intent through emits.
 //
 // Desktop: icon buttons 32px, active = --bg2 fill + 1px inset cyan-25% border +
 // cyan icon; brand symbol ◈ on top; bottom block = LIVE conn + unacked-alert
 // badge (crit red when >0) + vertical EDGE ADVISER wordmark.
 // Narrow: same entries as a bottom bar (icons 44px+), no wordmark.
 import { computed } from 'vue'
-import { Gauge, Activity, BellRing, MessagesSquare, ScrollText, Settings,
-  UserCog } from '@lucide/vue'
-import { RAIL_NAV, type AppRole } from '../router'
+import { Gauge, Activity, BellRing, MessagesSquare, ScrollText, Settings } from '@lucide/vue'
+import { RAIL_NAV } from '../router'
 import type { Conn } from '../stores/runtime'
 import ConnStatus from './ConnStatus.vue'
 
@@ -19,7 +17,6 @@ type RailIcon = 'overview' | 'assets' | 'alerts' | 'qa' | 'audit' | 'settings'
 
 const props = withDefaults(
   defineProps<{
-    role: AppRole
     alertsUnacked: number
     conn: Conn
     demo?: boolean
@@ -33,7 +30,6 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'navigate', routeName: string): void
   (e: 'openQa'): void
-  (e: 'toggleRole'): void
 }>()
 
 const ICONS: Record<RailIcon, typeof Gauge> = {
@@ -45,17 +41,13 @@ const ICONS: Record<RailIcon, typeof Gauge> = {
   settings: Settings,
 }
 
-const entries = computed(() =>
-  RAIL_NAV
-    .filter((n) => n.roles[props.role])
-    .map((n) => ({
-      name: n.name,
-      label: n.label,
-      icon: ICONS[n.icon],
-      // 'qa' is the drawer opener (never navigates); the rest are routes
-      isQa: n.icon === 'qa',
-    })),
-)
+const entries = RAIL_NAV.map((n) => ({
+  name: n.name,
+  label: n.label,
+  icon: ICONS[n.icon],
+  // 'qa' is the drawer opener (never navigates); the rest are routes
+  isQa: n.icon === 'qa',
+}))
 
 // badge: crit red whenever there is at least one unacked alert (spec §5.7)
 const badgeN = computed(() => (props.alertsUnacked > 99 ? '99+' : props.alertsUnacked || ''))
@@ -107,17 +99,6 @@ function onEntry(name: string, isQa: boolean) {
     </div>
 
     <div class="rail-foot">
-      <button
-        type="button"
-        class="role-btn"
-        :aria-label="role === 'operator' ? '切换为工程师视图' : '切换为操作工视图'"
-        :title="role === 'operator'
-          ? '当前【操作工】视图 — 界面视图切换，非权限控制（点击切换）'
-          : '当前【工程师】视图 — 界面视图切换，非权限控制（点击切换）'"
-        @click="emit('toggleRole')"
-      >
-        <UserCog :size="15" :stroke-width="1.5" aria-hidden="true" />
-      </button>
       <ConnStatus :conn="connProp" :last-event-at="lastEventAt" class="rail-conn" />
       <span class="wordmark" aria-hidden="true">EDGE ADVISER</span>
     </div>
@@ -164,10 +145,6 @@ function onEntry(name: string, isQa: boolean) {
 
 .rail-foot { display: flex; flex-direction: column; align-items: center; gap: 8px;
   padding: 6px 0 10px; }
-.role-btn { width: 32px; height: 32px; display: inline-flex; align-items: center;
-  justify-content: center; border: 1px solid var(--line); border-radius: var(--r-s);
-  background: transparent; color: var(--tx-dim); cursor: pointer; padding: 0; }
-.role-btn:hover { background: var(--bg2); color: var(--tx); }
 .rail-conn { max-width: 100%; }
 .rail-conn :deep(.cs-label) { display: none; }
 .rail-conn :deep(.cs-age) { display: none; }

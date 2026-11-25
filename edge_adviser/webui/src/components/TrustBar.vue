@@ -20,7 +20,7 @@ const pct = computed(() => {
 const color = computed(() =>
   props.level ? trustMeta[props.level].color : 'var(--cyan)')
 const label = computed(() =>
-  props.level ? trustMeta[props.level].label : 'TRUST')
+  props.level ? trustMeta[props.level].label : '可信度')
 </script>
 
 <template>

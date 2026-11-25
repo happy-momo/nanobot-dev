@@ -85,7 +85,9 @@ export class UnauthorizedError extends Error {}
 export const api = {
   get: <T>(url: string) => request<T>('GET', url),
   post: <T>(url: string, body?: unknown) => request<T>('POST', url, body),
+  put: <T>(url: string, body?: unknown) => request<T>('PUT', url, body),
   patch: <T>(url: string, body?: unknown) => request<T>('PATCH', url, body),
+  delete: <T>(url: string, body?: unknown) => request<T>('DELETE', url, body),
 }
 
 // Authenticated download: window.open() cannot send the bearer token, so
@@ -102,6 +104,33 @@ export async function downloadFile(url: string, filename: string): Promise<void>
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+}
+
+export async function downloadJsonFile<T>(url: string, filename: string): Promise<T> {
+  const res = await fetch(`${BASE}${url}`, { headers: headers() })
+  if (res.status === 401) {
+    if (_token && _onUnauthorized) {
+      setToken('')
+      _onUnauthorized()
+    }
+    throw new UnauthorizedError('unauthorized')
+  }
+  if (!res.ok) throw new ApiError(`下载失败 (${res.status})`)
+  let data: T
+  try {
+    data = JSON.parse(await res.text()) as T
+  } catch {
+    throw new ApiError('备份文件格式无效，未执行后续操作')
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+  return data
 }
 
 export type SSEStatus = 'connecting' | 'open' | 'error'

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// FleetSpectrum — signature element ① (spec §3.1): one 26px segmented strip
+// FleetSpectrum — signature element ① (spec §3.1): one segmented strip
 // where each asset is a segment flex-weighted by its snapshot sample count
 // (equal when no snapshot), colored by stateMeta, labeled with an uppercase
 // truncated asset-id short-code. crit segments glow + "!"; warn with a positive
@@ -128,7 +128,7 @@ function onKey(e: KeyboardEvent, id: string) {
     <div
       class="spec-wrap"
       role="group"
-      aria-label="舰队光谱带：点击分段直达设备"
+      aria-label="设备状态：选择设备查看详情"
     >
       <TooltipRoot v-for="c in props.cards" :key="c.asset_id">
         <TooltipTrigger
@@ -217,6 +217,13 @@ function onKey(e: KeyboardEvent, id: string) {
 
 /* dark-bg states (unknown family) can't carry a --bg0 label */
 .seg-dim .seg-label { color: var(--tx-dim); }
+
+@media (max-width: 899.98px) {
+  .spec-wrap { height: 44px; }
+  .seg { min-width: 0; flex-grow: 1; }
+  .seg-label { position: static; display: block; max-width: 100%; padding: 0 2px;
+    overflow: hidden; text-align: center; text-overflow: ellipsis; }
+}
 </style>
 
 <style>

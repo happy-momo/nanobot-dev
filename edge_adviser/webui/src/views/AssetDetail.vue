@@ -15,6 +15,7 @@ import { MessageSquare, RefreshCw } from '@lucide/vue'
 import { useRuntime, type SnapshotPayload } from '../stores/runtime'
 import { fetchReports, runNow } from '../api'
 import { levelMeta, stateMeta, trustMeta, type AlertLevel, type AssetState, type TrustLevel } from '../theme/meta'
+import { localizeConditionText } from '../copy'
 import { toast } from '../stores/toast'
 import VerdictFrame from '../components/VerdictFrame.vue'
 import StateDot from '../components/StateDot.vue'
@@ -62,6 +63,14 @@ const live = computed<SnapshotPayload | null>(() => rt.liveFor(assetId.value) ||
 
 const displayName = computed(() => card.value?.name || assetId.value)
 const kind = computed(() => card.value?.kind || '')
+const kindLabel = computed(() => ({
+  motor: '电机',
+  pump: '泵',
+  chiller: '冷水机组',
+  cooling_tower: '冷却塔',
+  feeder: '给料机',
+  simulator: '模拟设备',
+}[kind.value] || kind.value))
 
 const stateOf = computed<AssetState>(() => {
   const s = (live.value?.status || card.value?.runtime.state) || ''
@@ -88,8 +97,10 @@ const verdictColor = computed(() => levelMeta[levelOf.value].color)
 const verdictWord = computed(() => levelMeta[levelOf.value].label)
 
 const stateReason = computed(() =>
-  (card.value?.runtime as { state_reason?: string } | undefined)?.state_reason
-  || live.value?.headline || '')
+  localizeConditionText(
+    (card.value?.runtime as { state_reason?: string } | undefined)?.state_reason
+    || live.value?.headline,
+  ))
 
 // --------------------------------------------------------- gate fact row (mono) --
 const sampleCount = computed(() =>
@@ -199,7 +210,7 @@ watch(assetId, () => {
           <div class="head-name-row">
             <StateDot :state="stateOf" :glow="stateOf === 'critical' || stateOf === 'offline'" />
             <h1 class="head-name">{{ displayName }}</h1>
-            <span v-if="kind" class="eyebrow head-kind">{{ kind }}</span>
+            <span v-if="kind" class="eyebrow head-kind">{{ kindLabel }}</span>
           </div>
 
           <div class="head-verdict">
@@ -207,7 +218,7 @@ watch(assetId, () => {
               <span class="vf-word" :style="{ color: verdictColor }">{{ verdictWord }}</span>
               <span class="vf-sep">·</span>
               <span class="vf-trust mono" :style="{ color: trustMeta[trustOf].color }">
-                TRUST {{ trustMeta[trustOf].label }}
+                可信度 {{ trustMeta[trustOf].label }}
               </span>
             </VerdictFrame>
             <span v-if="stateReason" class="head-reason">{{ stateReason }}</span>
@@ -266,7 +277,7 @@ watch(assetId, () => {
     </template>
 
     <!-- ─── unknown / not-yet-resolved asset ─────────────────────────────────── -->
-    <ObsPanel v-else title="ASSET">
+    <ObsPanel v-else title="设备信息">
       <EmptyState
         :label="rt.ready ? '未找到该设备' : '加载设备…'"
         :hint="rt.ready ? '检查 asset_id 或回到总览选择设备' : '设备注册表正在加载'"

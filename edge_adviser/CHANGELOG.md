@@ -6,7 +6,7 @@
 
 ## 0.5.0 — 2026-11-25（HMI 前端重写：深空天文台 UI）
 
-`webui/` 整体重写（Vue 3 + Vite + reka-ui headless + TanStack Table + ECharts,移除 element-plus）：11 页收敛为 5 顶级页 + 资产详情 tab（实时/历史/报告/知识/设置）。青色=确定性事实、紫色=AI 解读的双色语义贯穿;QA 三态（回答/门禁拒绝/模型故障）+ 快照溯源行;报告/学习统一任务流（done/failed/timeout 三态复位）;阈值行内编辑即改即生效（PATCH 后引用替换,实时曲线色带重绘）;告警确认备注自动入学习反馈;审计页修复旧 bug C（按 kind 而非 outcome 筛选,"确认"可达）。PIN 使用界面内对话框，输入错误可重试、取消后可从连接状态恢复。后端配套修复：/report、/learn 与后台任务共享 token,SSE 任务流终态可达。demo 模式（`web config.demo.json`)离线跑通全部界面。
+`webui/` 整体重写（Vue 3 + Vite + reka-ui headless + TanStack Table + ECharts,移除 element-plus）：11 页收敛为 5 顶级页 + 资产详情 tab（实时/历史/报告/知识/设置）。青色=确定性事实、紫色=AI 解读的双色语义贯穿;QA 三态（回答/门禁拒绝/模型故障）+ 快照溯源行;报告/学习统一任务流（done/failed/timeout 三态复位）;阈值行内编辑即改即生效（PATCH 后引用替换,实时曲线色带重绘）;告警确认备注自动入学习反馈;审计页修复旧 bug C（按 kind 而非 outcome 筛选,"确认"可达）。PIN 使用界面内对话框，输入错误可重试、取消后可从连接状态恢复。导航始终显示全部六个入口，不再提供无业务权限含义的角色视图切换；QA 抽屉关闭后正确卸载，可再次打开。移动端告警列表改为卡片式布局并修正时间、时长显示；设备类型和主要页面标题统一为中文。后端配套修复：/report、/learn 与后台任务共享 token,SSE 任务流终态可达。demo 模式（`web config.demo.json`)离线跑通全部界面。
 
 ## 0.4.4 — 2026-11-23（P1 修复 + 事件循环健康 + 可观测性 + 部署形态 + 数据源加固）
 

@@ -161,7 +161,7 @@ watch(() => props.assetId, (v, o) => {
     <!-- ─── left: MEMORY.md chapters ─────────────────────────────────────── -->
     <div class="tk-main">
       <!-- load failure: retry, NOT the learn CTA (a model call can't fix a 500) -->
-      <ObsPanel v-if="loadError" title="KNOWLEDGE">
+      <ObsPanel v-if="loadError" title="知识记录">
         <EmptyState label="知识库加载失败" :hint="loadError" />
         <div class="tk-retry-row">
           <button type="button" class="tk-btn" @click="load">重试</button>
@@ -169,7 +169,7 @@ watch(() => props.assetId, (v, o) => {
       </ObsPanel>
 
       <!-- empty: learn CTA is legitimate here (nothing learned yet) -->
-      <ObsPanel v-else-if="!loading && !(data?.memory_md || '').trim()" title="KNOWLEDGE">
+      <ObsPanel v-else-if="!loading && !(data?.memory_md || '').trim()" title="知识记录">
         <EmptyState
           label="该设备还没有学习知识"
           hint="运行学习后，模型会从历史快照中沉淀运行洞察、阈值校准与维护动作"

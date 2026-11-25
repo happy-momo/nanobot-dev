@@ -176,6 +176,7 @@ class AssetSpec:
     # planned-downtime windows during which an empty window is EXPECTED (not an
     # offline fault). Each entry: {"start": iso, "end": iso}. Empty = no windows.
     downtime_windows: list[dict] = field(default_factory=list)
+    enabled: bool = True
 
     def metric(self, key: str) -> MetricSpec | None:
         return next((m for m in self.metrics if m.key == key), None)
@@ -194,6 +195,7 @@ class SourceSpec:
     url: str = ""
     topic: str = ""
     poll_interval_s: float = 1.0
+    credential_id: str = ""
     credentials: dict[str, str] = field(default_factory=dict)
 
 

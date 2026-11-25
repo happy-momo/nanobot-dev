@@ -12,41 +12,26 @@ import { createRouter, createWebHistory } from 'vue-router'
 // tasks fill them in (Overview T5, AssetDetail T6/T7, Qa T8, Alerts T9,
 // Audit/Settings T10).
 
-export type AppRole = 'operator' | 'engineer'
-
-export interface RouteRoles {
-  /** roles allowed to SEE this rail entry (pure UI folding, not a permission
-   * gate — the route itself stays reachable, spec §4 + fix G). */
-  operator?: boolean
-  engineer?: boolean
-}
-
 /** The 6 rail entries in display order; AppRail renders from this list. */
 export const RAIL_NAV: Array<{
   name: string
   label: string
   icon: 'overview' | 'assets' | 'alerts' | 'qa' | 'audit' | 'settings'
-  roles: RouteRoles
 }> = [
-  { name: 'overview', label: '总览', icon: 'overview', roles: { operator: true, engineer: true } },
-  { name: 'asset', label: '资产', icon: 'assets', roles: { operator: true, engineer: true } },
-  { name: 'alerts', label: '告警', icon: 'alerts', roles: { operator: true, engineer: true } },
-  { name: 'qa', label: '问答', icon: 'qa', roles: { engineer: true } },
-  { name: 'audit', label: '审计', icon: 'audit', roles: { engineer: true } },
-  { name: 'settings', label: '设置', icon: 'settings', roles: { engineer: true } },
+  { name: 'overview', label: '总览', icon: 'overview' },
+  { name: 'asset', label: '资产', icon: 'assets' },
+  { name: 'alerts', label: '告警', icon: 'alerts' },
+  { name: 'qa', label: '问答', icon: 'qa' },
+  { name: 'audit', label: '审计', icon: 'audit' },
+  { name: 'settings', label: '设置', icon: 'settings' },
 ]
-
-/** meta.roleGate derives from RAIL_NAV so the rail and guards cannot drift. */
-const roleGate = Object.fromEntries(
-  RAIL_NAV.map((n) => [n.name, n.roles]),
-) as Record<string, RouteRoles>
 
 const routes = [
   {
     path: '/',
     name: 'overview',
     component: () => import('../views/Overview.vue'),
-    meta: { title: '总览', roleGate: roleGate.overview },
+    meta: { title: '总览' },
   },
   {
     // no default param: the rail's entry lands here and the view picks the
@@ -55,37 +40,37 @@ const routes = [
     path: '/asset',
     name: 'asset',
     component: () => import('../views/AssetDetail.vue'),
-    meta: { title: '资产', roleGate: roleGate.asset },
+    meta: { title: '资产' },
   },
   {
     path: '/asset/:assetId',
     name: 'asset-detail',
     component: () => import('../views/AssetDetail.vue'),
-    meta: { title: '资产', roleGate: roleGate.asset },
+    meta: { title: '资产' },
   },
   {
     path: '/alerts',
     name: 'alerts',
     component: () => import('../views/Alerts.vue'),
-    meta: { title: '告警中心', roleGate: roleGate.alerts },
+    meta: { title: '告警中心' },
   },
   {
     path: '/qa',
     name: 'qa',
     component: () => import('../views/Qa.vue'),
-    meta: { title: '问答', roleGate: roleGate.qa },
+    meta: { title: '问答' },
   },
   {
     path: '/audit',
     name: 'audit',
     component: () => import('../views/Audit.vue'),
-    meta: { title: '审计', roleGate: roleGate.audit },
+    meta: { title: '审计' },
   },
   {
     path: '/settings',
     name: 'settings',
     component: () => import('../views/Settings.vue'),
-    meta: { title: '设置', roleGate: roleGate.settings },
+    meta: { title: '设置' },
   },
   {
     path: '/:pathMatch(.*)*',

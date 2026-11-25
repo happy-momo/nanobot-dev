@@ -14,6 +14,7 @@ import { ackAllAsset, ackAllFleet } from '../api'
 import { useRuntime, type AlertRec } from '../stores/runtime'
 import { toast } from '../stores/toast'
 import { stateMeta } from '../theme/meta'
+import { localizeConditionText } from '../copy'
 
 const props = defineProps<{
   alert: AlertRec | null
@@ -65,6 +66,9 @@ function levelColor(a: AlertRec): string {
 function levelLabel(a: AlertRec): string {
   const s = subjectKey(a)
   return (stateMeta as Record<string, { label: string }>)[s]?.label || s || '告警'
+}
+function displayHeadline(a: AlertRec): string {
+  return localizeConditionText(a.headline || a.reason)
 }
 function fmtTs(ts: number): string {
   const d = new Date(ts * 1000)
@@ -129,7 +133,7 @@ async function confirm(): Promise<void> {
             <span class="ad-k">首次时间</span>
             <span class="ad-v mono">{{ fmtTs(alert.ts) }}</span>
           </div>
-          <p class="ad-headline">{{ alert.headline || alert.reason || '—' }}</p>
+          <p class="ad-headline">{{ displayHeadline(alert) || '—' }}</p>
           <p v-if="alert.reason && alert.headline" class="ad-reason">{{ alert.reason }}</p>
         </div>
 

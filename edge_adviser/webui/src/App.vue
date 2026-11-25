@@ -7,7 +7,6 @@
 //  * visibility resync: an industrial tablet sleeping for hours wakes with a
 //    "connected" shell and frozen data → re-visibility with no SSE event for
 //    >60s resyncs server truth (carry-forward fix from the Task 3 review)
-//  * role folding: localStorage `ea_role` hides rail entries (pure UI, fix G)
 //  * demo banner: red vertical DEMO flag at the rail top (spec §5.7)
 //  * provide('openQa'): any view can slide the QA drawer open with an asset
 //    context (architecture-level root fix for the old `?asset=` bug A)
@@ -18,44 +17,14 @@ import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRuntime } from './stores/runtime'
 import { api, setToken, setUnauthorizedHandler } from './api/http'
-import { toast } from './stores/toast'
 import AppRail from './components/AppRail.vue'
 import QaDrawer from './components/QaDrawer.vue'
 import PinDialog from './components/PinDialog.vue'
 import ToastHost from './components/ToastHost.vue'
-import type { AppRole } from './router'
 
 const rt = useRuntime()
 const route = useRoute()
 const router = useRouter()
-
-// ---------------------------------------------------------------- role fold --
-const ROLE_KEY = 'ea_role'
-function readRole(): AppRole {
-  try {
-    return localStorage.getItem(ROLE_KEY) === 'operator' ? 'operator' : 'engineer'
-  } catch {
-    return 'engineer'
-  }
-}
-const role = ref<AppRole>(readRole())
-
-function setRole(r: AppRole) {
-  if (role.value === r) return
-  role.value = r
-  try {
-    localStorage.setItem(ROLE_KEY, r)
-  } catch {
-    // storage can be unavailable in private mode; role stays valid for this session
-  }
-  toast(r === 'operator' ? '已切换为【操作工】视图' : '已切换为【工程师】视图')
-}
-
-// current route requires a hidden role (deep link while folded) → fold home
-watch([role, () => route.name], () => {
-  const gate = route.meta?.roleGate as { operator?: boolean; engineer?: boolean } | undefined
-  if (gate && !gate[role.value]) router.replace({ name: 'overview' })
-})
 
 // ------------------------------------------------------------- narrow mode --
 const narrow = ref(window.innerWidth < 900)
@@ -223,7 +192,6 @@ function onNavigate(name: string) {
 <template>
   <div class="shell" :class="narrow ? 'mode-bottom' : 'mode-rail'">
     <AppRail
-      :role="role"
       :alerts-unacked="rt.overallAlertCount"
       :conn="connDisplay"
       :demo="rt.demo"
@@ -231,13 +199,12 @@ function onNavigate(name: string) {
       :current="(route.name as string) || ''"
       @navigate="onNavigate"
       @open-qa="openQa()"
-      @toggle-role="setRole(role === 'operator' ? 'engineer' : 'operator')"
     />
 
     <main class="content">
       <!-- bootstrap / load failure: honest failure surface with a retry -->
       <div v-if="rt.loadError" class="load-error">
-        <span class="eyebrow">CONNECTION</span>
+        <span class="eyebrow">连接状态</span>
         <p class="le-msg">无法连接服务器：{{ rt.loadError }}</p>
         <button type="button" class="le-retry" @click="retryBootstrap">重试</button>
       </div>

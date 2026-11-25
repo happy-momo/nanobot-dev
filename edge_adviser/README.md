@@ -125,6 +125,8 @@ PYTHONPATH=$PWD/edge_adviser python -m edge_adviser.cli web config.sample.json
 
 **访问控制**：`hmi_pin`（`config` 顶部）为 `"none"` 时局域网开放；设为字符串则启用共享 PIN，浏览器先 `POST /api/auth/pin` 换短期 HMAC token。
 
+**设备与连接器配置**：设置页可维护资产、指标和 REST 接口；MQTT、OPC UA、Modbus 仍为后续阶段。配置管理及连接测试要求启用 `hmi_pin`，避免未认证请求读取接入拓扑或复用后端凭据。REST 凭据使用 Fernet 加密后保存在工作区 `.connector_credentials.enc`，必须在服务环境中设置 `EDGE_ADVISER_CREDENTIAL_KEY`；可用 `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` 生成密钥，并通过部署密钥管理系统保存。不要将密钥写入项目文件或配置备份；丢失密钥后原凭据无法恢复。删除资产前会下载不含密钥值和凭据标识的 JSON 备份，历史记录会保留。
+
 ### 6. 本地演示模式（无需任何模型）
 
 0.4.x 提供一条命令的**完整本地演示**：确定性 MockGateway 替代真实 LLM，启动时自动播种快照/报告/告警/审计历史，5 台模拟设备覆盖全部状态（healthy / warn / planned_downtime / stale 等）。

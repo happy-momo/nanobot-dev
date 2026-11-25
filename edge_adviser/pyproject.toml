@@ -13,6 +13,7 @@ dependencies = [
     # a Docker install must not depend on another package's dependency tree
     "loguru>=0.7",
     "aiohttp>=3.9",
+    "cryptography>=42",
 ]
 
 [project.scripts]

@@ -29,6 +29,7 @@ from pathlib import Path
 from .config import load_config
 from .core import AssetStore
 from .core.asset_store import create_asset_memory_store  # reused pattern
+from .core.credential_vault import CredentialVault
 from .core.scheduler import Supervisor
 from .ingest import create_source
 from .learn.feedback import FeedbackService
@@ -56,17 +57,24 @@ def _build(config_path: str | Path) -> "Context":
     store = AssetStore(config.workspace)
     for asset in config.assets:
         store.ensure_asset(asset)
+    credential_vault = CredentialVault(
+        store.workspace / ".connector_credentials.enc",
+        os.environ.get("EDGE_ADVISER_CREDENTIAL_KEY"),
+    )
     ctx = ContextBuilder(config, store)
     gateway = LLMGateway(config, ctx)
     report_gen = ReportGenerator(config, store, gateway)
     learner = Learner(config, store, gateway)
     qa = QAEngine(config, store, gateway)
     feedback = FeedbackService(store)
-    return _Context(config, store, gateway, report_gen, learner, qa, feedback)
+    return _Context(
+        config, store, gateway, report_gen, learner, qa, feedback, credential_vault,
+    )
 
 
 class _Context:
-    def __init__(self, config, store, gateway, report_gen, learner, qa, feedback):
+    def __init__(self, config, store, gateway, report_gen, learner, qa, feedback,
+                 credential_vault):
         self.config = config
         self.store = store
         self.gateway = gateway
@@ -74,6 +82,7 @@ class _Context:
         self.learner = learner
         self.qa = qa
         self.feedback = feedback
+        self.credential_vault = credential_vault
 
 
 async def _cmd_setup(c: _Context) -> None:
@@ -98,9 +107,15 @@ def _make_source(c: _Context, asset_id: str):
     if spec is None:
         raise SystemExit(f"no source for asset {asset_id}")
     try:
-        return create_source(spec)
+        credentials = (
+            c.credential_vault.get(spec.credential_id)
+            if spec.credential_id else None
+        )
+        return create_source(spec, credentials=credentials)
     except NotImplementedError as exc:
         raise SystemExit(f"source not available: {exc}") from None
+    except (KeyError, RuntimeError, ValueError, OSError) as exc:
+        raise SystemExit(f"connector credentials unavailable: {exc}") from None
 
 
 def _supervisor(c: _Context) -> Supervisor:
@@ -109,6 +124,7 @@ def _supervisor(c: _Context) -> Supervisor:
         report_gen=c.report_gen, learner=c.learner,
         # N9: pass the configured analysis-regime label (no hardcoded "degrade").
         default_regime=c.config.analysis_regime,
+        credential_lookup=c.credential_vault.get,
     )
 
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Overview `/` (spec §5.1): the observation-deck home page.
-//   FLEET OVERVIEW eyebrow + 设备总览 title + LIVE indicator
+//   设备总览 heading + LIVE indicator
 //   signature① FleetSpectrum strip (primary navigation, no card wall)
 //   ACTIVE VERDICTS panel — only assets needing a human:
 //     state ∈ {critical, offline, stale} || overall_level ∈ {warn, crit}
@@ -16,6 +16,7 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRuntime, type AssetCard } from '../stores/runtime'
 import { stateMeta, levelMeta, type AssetState, type AlertLevel } from '../theme/meta'
+import { localizeConditionText } from '../copy'
 import { toast } from '../stores/toast'
 import ObsPanel from '../components/ObsPanel.vue'
 import FleetSpectrum from '../components/FleetSpectrum.vue'
@@ -211,7 +212,7 @@ onMounted(() => {
     <!-- ─── header ─────────────────────────────────────────────────────────── -->
     <header class="head">
       <div>
-        <span class="eyebrow">FLEET OVERVIEW</span>
+        <span class="eyebrow">设备运行概况</span>
         <h1 class="title">设备总览</h1>
       </div>
       <ConnStatus :conn="connDisplay" :last-event-at="rt.lastEventAt" />
@@ -220,15 +221,15 @@ onMounted(() => {
     <!-- ─── signature① 舰队光谱带 ───────────────────────────────────────────── -->
     <div v-if="rt.overviewCards.length" class="spectrum-block">
       <div class="spec-meta">
-        <span class="eyebrow">FLEET SPECTRUM — 点击分段直达设备</span>
-        <span class="eyebrow mono">{{ rt.overviewCards.length }} ASSETS</span>
+        <span class="eyebrow">设备状态 · 选择设备查看详情</span>
+        <span class="eyebrow mono">{{ rt.overviewCards.length }} 台设备</span>
       </div>
       <FleetSpectrum :cards="rt.overviewCards" @select="openAsset" />
     </div>
 
     <template v-if="rt.overviewCards.length">
       <!-- ─── ACTIVE VERDICTS ────────────────────────────────────────────────── -->
-      <ObsPanel title="ACTIVE VERDICTS" :meta="`${verdictAssets.length} 项待处理`">
+      <ObsPanel title="需关注设备" :meta="`${verdictAssets.length} 项`">
         <EmptyState
           v-if="!verdictAssets.length"
           label="全场判定正常"
@@ -261,7 +262,7 @@ onMounted(() => {
                 >{{ slopeText(trendOf(c), unitOf(c, firstKeyOf(c))) }}</span>
               </div>
               <div class="vrow-trust">
-                <span class="eyebrow">TRUST</span>
+                <span class="eyebrow">可信度</span>
                 <TrustBar :trust="trustPct(c)" :level="trustLevelOf(c)" />
               </div>
               <div class="vrow-actions">
@@ -275,7 +276,7 @@ onMounted(() => {
                 :title="`${unackedOf(c.asset_id)} 条未确认告警`"
               >{{ unackedOf(c.asset_id) }}</span>
             </div>
-            <div class="vrow-headline">{{ c.runtime.headline || c.runtime.state_reason || '' }}</div>
+            <div class="vrow-headline">{{ localizeConditionText(c.runtime.headline || c.runtime.state_reason) }}</div>
           </div>
 
           <!-- compact fault rows: offline / stale (gated — no trend to show) -->
@@ -290,7 +291,7 @@ onMounted(() => {
               <StateDot :state="stateOf(c)" :glow="stateOf(c) === 'offline'" />
               <span class="frow-name">{{ c.name }}</span>
               <span class="frow-id mono">{{ c.asset_id }}</span>
-              <span class="frow-reason">{{ c.runtime.state_reason || stateMeta[stateOf(c)].label }}</span>
+              <span class="frow-reason">{{ localizeConditionText(c.runtime.state_reason) || stateMeta[stateOf(c)].label }}</span>
               <span
                 v-if="unackedOf(c.asset_id) > 0"
                 class="frow-badge mono"
@@ -310,7 +311,7 @@ onMounted(() => {
       </ObsPanel>
 
       <!-- ─── 全场台账 ───────────────────────────────────────────────────────── -->
-      <ObsPanel title="全场台账" :meta="`${rt.overviewCards.length} ASSETS`">
+      <ObsPanel title="全部设备" :meta="`${rt.overviewCards.length} 台`">
         <div
           v-for="c in rt.overviewCards"
           :key="c.asset_id"

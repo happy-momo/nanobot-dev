@@ -9,67 +9,47 @@
 import { DialogPortal, DialogRoot, DialogContent, DialogOverlay, DialogTitle,
   DialogDescription, DialogClose } from 'reka-ui'
 import { X } from '@lucide/vue'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import QaPanel from './QaPanel.vue'
 
 const props = defineProps<{ open: boolean; assetId?: string }>()
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
-// ------------------------------------------------------- slide-out on close --
-// App keeps this drawer mounted (v-if-less) and unmounts only on `close`, so we
-// own the exit here: intercept the close request, flip the Reka root to closed
-// (data-state=closed → qd-out plays), and only then tell App to unmount. Emitting
-// `close` immediately was a hard cut — Presence reads the computed animation-name
-// while the tree is already tearing down, so the 260ms exit never rendered.
 const EXIT_MS = 260
-const closing = ref(false)
+const rendered = ref(props.open)
 let exitTimer = 0
-
-const rootOpen = computed(() => props.open && !closing.value)
-
-// reduced motion: the stylesheet drops the animation, so there is nothing to
-// wait for — unmount on the spot (no flash of a static panel).
-const exitMs = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  ? 0
-  : EXIT_MS
+const exitMs = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : EXIT_MS
 
 watch(() => props.open, (open) => {
+  window.clearTimeout(exitTimer)
   if (open) {
-    // reopening mid-exit (e.g. openQa from a view while it slides out)
-    window.clearTimeout(exitTimer)
-    closing.value = false
-    return
+    rendered.value = true
+  } else if (rendered.value) {
+    exitTimer = window.setTimeout(() => { rendered.value = false }, exitMs)
   }
-  if (closing.value) return   // exit already in flight
-  requestClose()
 })
-
-/** begin the exit, then hand the unmount to App once the 260ms slide-out is done */
-function requestClose() {
-  closing.value = true
-  exitTimer = window.setTimeout(() => {
-    closing.value = false
-    emit('close')
-  }, exitMs)
-}
 
 onBeforeUnmount(() => window.clearTimeout(exitTimer))
 </script>
 
 <template>
-  <DialogRoot :open="rootOpen" @update:open="(v: boolean) => { if (!v) requestClose() }">
-    <DialogPortal>
+  <DialogRoot :open="props.open" @update:open="(open: boolean) => { if (!open) emit('close') }">
+    <DialogPortal v-if="rendered">
       <DialogOverlay class="qd-ov" />
-      <DialogContent class="qd-panel" :aria-describedby="undefined">
+      <DialogContent
+        class="qd-panel"
+        :aria-describedby="undefined"
+        @escape-key-down="emit('close')"
+      >
         <header class="qd-head">
           <div class="qd-titles">
-            <span class="eyebrow">QA — ASK ADVISER</span>
+            <span class="eyebrow">设备问答</span>
             <DialogTitle class="qd-title">
               {{ props.assetId || '选择资产' }}
             </DialogTitle>
             <DialogDescription class="qd-desc">
-              问答会话按资产分线程保存；门禁拒绝时提示可“允许旧数据”。
+              回答依据所选设备的数据；数据较旧时会提示你确认后再继续。
             </DialogDescription>
           </div>
           <DialogClose class="qd-x" aria-label="关闭问答抽屉">

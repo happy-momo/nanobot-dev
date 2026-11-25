@@ -207,7 +207,7 @@ export const useQaStore = defineStore('qa', () => {
 
 ---
 
-### Task 4: App 外壳（rail 导航 + 全局顶情 + QA 抽屉容器 + Toast + 角色降级）
+### Task 4: App 外壳（rail 导航 + 全局顶情 + QA 抽屉容器 + Toast）
 
 **Files:**
 - Create: `webui/src/App.vue`、`webui/src/components/AppRail.vue`、`webui/src/components/QaDrawer.vue`、`webui/src/components/ToastHost.vue`
@@ -218,15 +218,15 @@ export const useQaStore = defineStore('qa', () => {
 - Produces:
 
 ```vue
-<!-- AppRail.vue props: { role: 'operator'|'engineer'; alertsUnacked: number; conn: string } -->
+<!-- AppRail.vue props: { alertsUnacked: number; conn: string } -->
 <!--   emit: navigate(routeName), openQa -->
 <!-- 图标: lucide Gauge(总览)/Activity(资产)/BellRing(告警)/MessagesSquare(问答)/ScrollText(审计)/Settings(设置) -->
-<!-- operator 角色隐藏: 问答/审计/设置；rail<900px 变底部 tab（media query in component）-->
+<!-- 导航始终显示全部入口；rail<900px 变底部 tab（media query in component）-->
 <!-- QaDrawer.vue props: { open: boolean; assetId?: string }  emit: close  内部用 useQaStore + QaPanel(Task 8) -->
 ```
 
 - [ ] **Step 1:** 写新路由表（懒加载，路径见 spec §4：`/`→Overview、`/asset/:assetId`→AssetDetail、`/alerts`、`/qa`、`/audit`、`/settings`；占位视图先建 `views/*.vue` 最小骨架逐个 Task 填充）。
-- [ ] **Step 2:** App.vue：rail + `<router-view>` + 全局 `QaDrawer`（provide `openQa(assetId?)` 函数供任意页面调用）+ ToastHost + demo 红标 + 401 重入（照搬旧 App.vue 逻辑）+ 角色选择（localStorage `ea_role`，UI 上注明"界面视图切换，非权限控制"——修复旧问题 G）。
+- [ ] **Step 2:** App.vue：rail + `<router-view>` + 全局 `QaDrawer`（provide `openQa(assetId?)` 函数供任意页面调用）+ ToastHost + demo 红标 + 401 重入（照搬旧 App.vue 逻辑）。不提供纯前端角色切换；所有入口始终可见。
 - [ ] **Step 3:** ToastHost：Reka Toast，右下 hairline 小条，tone 着色左边框。
 - [ ] **Step 4:** 验证：build 通过 + 手动 `npm run dev` 后端 demo 模式（`edge-adviser web --demo`）打开页面 rail 渲染、路由可达。
 - [ ] **Step 5: Commit** `feat(webui): app shell — rail/router/drawer container/toast/role`
@@ -358,7 +358,7 @@ export const useQaStore = defineStore('qa', () => {
 - Modify: `webui/package.json`（最终依赖核对）
 
 - [ ] **Step 1:** 全局搜索 `element-plus|ElMessage|el-` 确认零残留；`grep -rn "state === 'warn'" src/` 零残留（旧 bug E）；grep `backdrop-filter` 仅 QaDrawer 遮罩一处。
-- [ ] **Step 2:** spec §10 验收清单逐项走查（demo 模式 `edge-adviser web --demo`）：光谱带→资产 5 tab→告警确认→QA 三态→报告任务流三态→学习→阈值编辑→审计 ack 筛选→设置；SSE 断连重连 resync；平板窄屏(<900px)底部 tab 布局；操作工角色只见 4 入口；PIN 登录/401 重入。
+- [ ] **Step 2:** spec §10 验收清单逐项走查（demo 模式 `edge-adviser web --demo`）：光谱带→资产 5 tab→告警确认→QA 三态→报告任务流三态→学习→阈值编辑→审计 ack 筛选→设置；SSE 断连重连 resync；平板窄屏(<900px)底部 tab 布局且六个入口可见；PIN 登录/401 重入。
 - [ ] **Step 3:** `npm run typecheck && npm run build`；bundle 检查 `grep -c element dist/assets/*.js` 为 0。
 - [ ] **Step 4: Commit** `feat(webui): redesign complete — deep-space observatory UI per spec`
 - [ ] **Step 5:** 更新 `edge_adviser/CHANGELOG.md` 加一行（仅文档）。

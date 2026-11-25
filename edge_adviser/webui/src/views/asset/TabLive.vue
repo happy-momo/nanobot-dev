@@ -19,6 +19,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRuntime, type SnapshotPayload } from '../../stores/runtime'
+import { localizeConditionText } from '../../copy'
 import { ackAlert, fetchAlerts, fetchReport, fetchSnapshots } from '../../api'
 import { levelMeta, stateMeta, type AlertLevel } from '../../theme/meta'
 import { toast } from '../../stores/toast'
@@ -192,7 +193,20 @@ const reportTime = computed(() => {
 })
 
 const reportSource = computed(() =>
-  report.value?.meta?.provider || report.value?.provider || '')
+  (report.value?.meta?.provider || report.value?.provider || '')
+    .replace(/^mock-online$/, '模拟数据'))
+
+function fmtWindowEnd(value?: string): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
 
 async function loadReport() {
   report.value = null
@@ -340,7 +354,7 @@ watch(() => props.assetId, (v, o) => {
           <div v-for="a in alerts" :key="a.ts" class="al" :style="{ '--al-c': alertColor(a) }">
             <div class="al-head">
               <span class="al-tag" :style="{ color: alertColor(a) }">{{ alertLabel(a) }}</span>
-              <span class="al-ts mono">{{ a.window_end || '' }}</span>
+              <span class="al-ts mono">{{ fmtWindowEnd(a.window_end) }}</span>
               <button
                 type="button"
                 class="al-ack"
@@ -348,7 +362,7 @@ watch(() => props.assetId, (v, o) => {
                 @click="ackOne(a)"
               >{{ acking[a.ts] ? '确认中…' : '确认' }}</button>
             </div>
-            <div class="al-body">{{ a.headline || a.reason || '' }}</div>
+            <div class="al-body">{{ localizeConditionText(a.headline || a.reason) }}</div>
           </div>
         </template>
         <EmptyState v-else label="无活跃告警" :hint="`${displayName} 当前无需处理`" />

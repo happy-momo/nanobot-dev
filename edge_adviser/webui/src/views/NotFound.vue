@@ -7,7 +7,7 @@
 
 <template>
   <div class="stub">
-    <span class="eyebrow">PAGE NOT FOUND</span>
+    <span class="eyebrow">页面不存在</span>
   </div>
 </template>
 

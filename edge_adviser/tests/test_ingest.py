@@ -78,9 +78,10 @@ def test_rest_pull_passes_window_and_returns_samples() -> None:
                     {"ts": "2026-11-23T10:00:02+00:00", "temp": 63.9}]
 
     class _Session:
-        def get(self, url, params=None):
+        def get(self, url, params=None, **kwargs):
             captured["url"] = url
             captured["params"] = dict(params or {})
+            captured["allow_redirects"] = kwargs.get("allow_redirects")
 
             class _Ctx:
                 async def __aenter__(self): return _Resp()
@@ -97,6 +98,7 @@ def test_rest_pull_passes_window_and_returns_samples() -> None:
     assert len(rows) == 2 and rows[0]["temp"] == 63.2
     assert captured["params"]["start"] == start.isoformat()
     assert captured["params"]["end"] == end.isoformat()
+    assert captured["allow_redirects"] is False
     assert captured["url"].startswith("http://hist.test/api/samples")
 
 
@@ -105,23 +107,27 @@ def test_rest_pull_http_error_raises() -> None:
     failed pull and the offline state machine advances (never silent)."""
     from edge_adviser.ingest.rest import RestSource
 
+    spec = _spec()
+    spec.url = "http://hist.test/api/samples?token=do-not-log"
+
     class _Resp:
         def raise_for_status(self):
-            raise RuntimeError("500")
+            raise RuntimeError(f"500 from {spec.url}")
 
     class _Session:
-        def get(self, url, params=None):
+        def get(self, url, params=None, **kwargs):
             class _Ctx:
                 async def __aenter__(self): return _Resp()
 
                 async def __aexit__(self, *a): return False
             return _Ctx()
 
-    src = RestSource(_spec())
+    src = RestSource(spec)
     src._session = _Session()  # type: ignore[assignment]
     now = datetime.now(timezone.utc)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as exc_info:
         _run(src.pull(now - timedelta(seconds=60), now))
+    assert "do-not-log" not in str(exc_info.value)
 
 
 def test_rest_pull_non_list_payload_raises() -> None:
@@ -135,7 +141,7 @@ def test_rest_pull_non_list_payload_raises() -> None:
             return {"error": "bad gateway page"}
 
     class _Session:
-        def get(self, url, params=None):
+        def get(self, url, params=None, **kwargs):
             class _Ctx:
                 async def __aenter__(self): return _Resp()
 

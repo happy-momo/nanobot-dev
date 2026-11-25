@@ -14,6 +14,7 @@ import { fetchConfig, fetchHealth, fetchStats, fetchVersion } from '../api'
 import { useRuntime } from '../stores/runtime'
 import ObsPanel from '../components/ObsPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
+import ConfigurationManager from '../components/ConfigurationManager.vue'
 
 const rt = useRuntime()
 
@@ -97,14 +98,16 @@ const PARAM_ROWS = computed(() => [
   <div class="page st-page">
     <!-- spec §5.6: demo=true → global red DEMO banner across the app top -->
     <div v-if="rt.demo" class="st-demo-banner" role="status">
-      DEMO — 演示模式，数据由确定性模拟器生成，不代表真实设备
+      演示环境 · 使用模拟数据，不代表真实设备状态
     </div>
 
     <EmptyState v-if="loadError" label="设置信息加载失败" :hint="loadError" />
 
     <div v-else class="st-grid">
+      <ConfigurationManager />
+
       <!-- ─── 服务状态 ─────────────────────────────────────────────────────── -->
-      <ObsPanel title="SERVICE — 服务状态">
+      <ObsPanel title="服务状态">
         <div class="st-cells">
           <div class="st-cell">
             <span class="st-k">版本</span>
@@ -128,7 +131,7 @@ const PARAM_ROWS = computed(() => [
               {{ sched?.running ? '运行中' : '未运行' }}
             </span>
             <span v-if="sched?.last_tick_age_s != null" class="st-sub mono">
-              上次 tick {{ Math.round(sched.last_tick_age_s) }}s 前
+              上次运行于 {{ Math.round(sched.last_tick_age_s) }} 秒前
             </span>
           </div>
           <div class="st-cell">
@@ -143,7 +146,7 @@ const PARAM_ROWS = computed(() => [
       </ObsPanel>
 
       <!-- ─── 运行观测 ─────────────────────────────────────────────────────── -->
-      <ObsPanel title="OBSERVABILITY — 运行观测">
+      <ObsPanel title="运行统计">
         <div class="st-cells">
           <div class="st-cell">
             <span class="st-k">模型成功率</span>
@@ -185,14 +188,14 @@ const PARAM_ROWS = computed(() => [
       </ObsPanel>
 
       <!-- ─── 运行参数（只读） ─────────────────────────────────────────────── -->
-      <ObsPanel title="PARAMETERS — 运行参数">
+      <ObsPanel title="运行参数">
         <div class="st-cells">
           <div v-for="row in PARAM_ROWS" :key="row.k" class="st-cell">
             <span class="st-k">{{ row.label }}</span>
             <span class="st-v mono">{{ row.v }}</span>
           </div>
           <div v-for="c in crons" :key="c.k" class="st-cell">
-            <span class="st-k">{{ c.label }} cron</span>
+            <span class="st-k">{{ c.label }}计划</span>
             <span class="st-v mono">{{ c.v }}</span>
           </div>
         </div>

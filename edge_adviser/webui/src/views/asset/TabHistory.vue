@@ -28,6 +28,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import MetricBand from '../../components/MetricBand.vue'
 import type { MetricSpecMeta } from '../../theme/meta'
 import { useRuntime } from '../../stores/runtime'
+import { localizeConditionText } from '../../copy'
 import type { RowData } from '@tanstack/table-core'
 
 // column meta carries the numeric-alignment flag — TS augmentation on the
@@ -238,7 +239,7 @@ watch(() => props.assetId, (v, o) => {
 </script>
 
 <template>
-  <ObsPanel title="HISTORY — 快照档案" :meta="`${rows.length} 条`">
+  <ObsPanel title="历史快照" :meta="`${rows.length} 条`">
     <template #actions>
       <button
         type="button"
@@ -337,7 +338,7 @@ watch(() => props.assetId, (v, o) => {
               <td :colspan="columns.length + 1">
                 <div class="th-detail">
                   <p v-if="row.original.headline" class="th-headline mono">
-                    {{ row.original.headline }}
+                    {{ localizeConditionText(row.original.headline) }}
                   </p>
                   <div class="th-bands">
                     <div
@@ -355,7 +356,7 @@ watch(() => props.assetId, (v, o) => {
                   <p class="th-meta mono">
                     <span>状态 {{ stateMeta[(row.original.status || 'unknown') as AssetState]?.label || '未知' }}</span>
                     <span>样本 {{ row.original.sample_count }}</span>
-                    <span>window_end {{ fmtTime(row.original.window_end) }}</span>
+                    <span>数据窗口结束 {{ fmtTime(row.original.window_end) }}</span>
                   </p>
                 </div>
               </td>

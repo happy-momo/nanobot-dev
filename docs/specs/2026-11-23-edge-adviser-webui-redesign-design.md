@@ -158,7 +158,7 @@ EdgeAdviser 是边缘部署的工业设备智能顾问：确定性 numpy 引擎�
 
 - 原独立 `/reports`、`/knowledge`、`/assets`、`/feedback` 取消顶级入口：报告与知识并入资产详情 tab；阈值编辑并入资产详情"设置"tab；反馈并入两处——告警确认备注即反馈（后端已联动），资产详情页脚提供"提交反馈"入口。
 - **QA 抽屉**：全局组件（rail 上 ◈ 图标 + 资产页"问 AI"按钮触发）。右侧滑入 420px 抽屉，自动携带当前资产上下文（无上下文时显示资产选择器）。"全屏"按钮跳 `/qa`。**根治旧 bug A（?asset= 丢失）**。
-- 角色降级（纯前端，沿用现状）：操作工 rail 只显示 总览/资产/告警/反馈入口；QA、审计、设置隐藏。仅 UI 层。
+- 导航始终显示全部六个入口；前端角色视图切换不提供权限控制或业务行为，因此不提供角色切换按钮。需要访问控制时必须由后端负责。
 
 ---
 
@@ -200,7 +200,7 @@ EdgeAdviser 是边缘部署的工业设备智能顾问：确定性 numpy 引擎�
 - **tab 历史**：`snapshots` 翻页表（TanStack Table）：时间/overall/各指标/coverage/trust，行点击展开指标明细。
 - **tab 报告**：左侧日期列表（`/reports`），右侧 DATA-SCOPE 徽章（provenance：数据范围/样本/生成参数，**青色系**）+ Markdown 正文（marked + DOMPurify）+ 生成新报告（POST report → token → `/stream/task/{token}` 进度行：queued→start→done/failed，**超时必须复位按钮**，见 §9-B）+ 下载 .md/.json（downloadFile 带 token）。
 - **tab 知识**：MEMORY.md 章节导航（按 `##` 分割）+ 正文 + 右列 claims/conflicts 账本（冲突行用 warn 色标 "已被取代"）+ 学习门禁状态展示 + 运行学习（同报告的任务流模式）。
-- **tab 设置**（工程师角色）：只读档案（描述/采样频率/窗口/数据源）+ **阈值编辑**（每指标 MetricBand 色带 + 行内编辑表单：PATCH `/metrics/{key}/thresholds`，客户端校验：有限值、warn≤crit、重叠拒绝，错误即时提示）+ 计划停机窗（只读）+ "提交反馈"入口。
+- **tab 设置**：只读档案（描述/采样频率/窗口/数据源）+ **阈值编辑**（每指标 MetricBand 色带 + 行内编辑表单：PATCH `/metrics/{key}/thresholds`，客户端校验：有限值、warn≤crit、重叠拒绝，错误即时提示）+ 计划停机窗（只读）+ "提交反馈"入口。
 
 ### 5.3 告警中心 `/alerts`
 
@@ -266,7 +266,7 @@ EdgeAdviser 是边缘部署的工业设备智能顾问：确定性 numpy 引擎�
 
 - `runtime.ts`（唯一全局 store）：overviewCards / live / alerts / conn / demo / dataFreshnessS / nowSec 秒表；`startStreams()` 双 SSE + 重连 500ms 去抖 resync + visibilitychange 恢复 resync——逻辑照搬旧实现（这部分旧代码质量高）。
 - `api/http.ts`：信封解包 / PIN→token / 401 重入 / downloadFile——照搬旧实现，仅移除 Element 依赖（ElMessage → 自绘 toast：右下 hairline 小条，用 Reka Toast）。
-- 会话存储沿用 sessionStorage `ea_token`、角色 `ea_role`。
+- 会话存储沿用 sessionStorage `ea_token`；不存储纯 UI 角色状态。
 - QA 会话历史：`stores/qa.ts` 新增，localStorage 按资产分线程。
 
 ## 8. 工程约束
@@ -285,12 +285,12 @@ EdgeAdviser 是边缘部署的工业设备智能顾问：确定性 numpy 引擎�
 - **D** `main.ts` 显式 `import './theme/echarts'` 注册 `ea-dark`（重命名为 `ea-obs`）。
 - **E** pulse/光晕条件改判 `overall_level`，删除 `state==='warn'` 死代码。
 - **F** 设置 tab 文案如实描述可编辑性。
-- **G** 角色切换保留纯前端降级，UI 上注明"界面视图切换，非权限控制"（诚实原则）。
+- **G** 移除无业务意义且不提供权限控制的前端角色切换；始终展示完整导航。
 
 ## 10. 验收清单
 
 1. demo 模式全功能走查：总览光谱带→资产详情（5 tab）→告警确认（备注入 feedback）→QA（正常回答 / 门禁拒绝 / provider 失败三态）→报告生成（任务流三态）→学习→阈值编辑→审计（kind 筛选含 ack）→设置。
 2. SSE 断连重连、平板休眠恢复 resync 正常。
-3. 操作工角色只见允许入口；PIN 登录/401 重入正常。
+3. 六个导航入口始终可见；PIN 登录/401 重入正常。
 4. typecheck 通过；bundle 不含 element-plus。
 5. 视觉抽查：无蓝紫渐变、无玻璃卡片、无圆角卡片墙、AI 内容全部带紫标+溯源。

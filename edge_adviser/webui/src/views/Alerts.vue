@@ -25,6 +25,7 @@ import { BellRing } from '@lucide/vue'
 import { useRuntime, type AlertRec } from '../stores/runtime'
 import { toast } from '../stores/toast'
 import { stateMeta } from '../theme/meta'
+import { localizeConditionText } from '../copy'
 import ObsPanel from '../components/ObsPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
 import AckDialog from '../components/AckDialog.vue'
@@ -127,6 +128,10 @@ function fmtTs(ts: number): string {
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
+function displayHeadline(a: AlertRec): string {
+  return localizeConditionText(a.headline || a.reason)
+}
+
 // live-ticking 持续时长 — 30s interval; a per-second tick would re-render the
 // whole table every second for a column nobody reads at that resolution
 const nowTick = ref(Date.now())
@@ -138,17 +143,17 @@ onBeforeUnmount(() => { if (tickTimer !== null) window.clearInterval(tickTimer) 
 
 function duration(ts: number): string {
   const s = Math.max(0, Math.floor((nowTick.value - ts * 1000) / 1000))
-  if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+  if (s < 60) return `${s}秒`
+  if (s < 3600) return `${Math.floor(s / 60)}分${s % 60}秒`
+  return `${Math.floor(s / 3600)}小时${Math.floor((s % 3600) / 60)}分`
 }
 
 // ------------------------------------------------------------------ table --
 const col = createColumnHelper<AlertRec>()
 const columns = computed<ColumnDef<AlertRec, any>[]>(() => [
   col.accessor((r) => assetName(r.asset_id), { id: 'asset', header: '资产' }),
-  col.accessor((r) => r.headline || r.reason || '', { id: 'headline', header: '标题' }),
-  col.accessor('ts', { header: '首次时间', meta: { mono: true } }),
+  col.accessor((r) => displayHeadline(r), { id: 'headline', header: '标题' }),
+  col.accessor((r) => fmtTs(r.ts), { id: 'ts', header: '发生时间', meta: { mono: true } }),
   col.accessor((r) => duration(r.ts), { id: 'dur', header: '持续时长', meta: { mono: true } }),
 ])
 const table = useVueTable<AlertRec>({
@@ -257,10 +262,10 @@ function closeDialog(): void {
     </div>
 
     <!-- ─── table ────────────────────────────────────────────────────────── -->
-    <ObsPanel title="ALERTS — 告警列表" :meta="`${filtered.length} 条`">
+    <ObsPanel title="告警记录" :meta="`${filtered.length} 条`">
       <EmptyState
         v-if="!filtered.length"
-        label="无符合筛选的告警"
+        label="没有符合条件的告警"
         hint="告警只对真实状态变化触发；计划停机与数据不足状态后端已豁免"
       >
         <template #icon><BellRing :size="18" :stroke-width="1.5" /></template>
@@ -287,11 +292,16 @@ function closeDialog(): void {
             :class="{ 'al-row-acked': row.original.acked }"
             role="button"
             tabindex="0"
-            :aria-label="`查看告警 ${row.original.headline || ''}`"
+            :aria-label="`查看告警 ${displayHeadline(row.original)}`"
             @click="askAck(row.original)"
             @keydown.enter.prevent="askAck(row.original)"
           >
-            <td v-for="cell in row.getVisibleCells()" :key="cell.id" :class="{ 'al-mono-col': cell.column.columnDef.meta?.mono }">
+            <td
+              v-for="cell in row.getVisibleCells()"
+              :key="cell.id"
+              :class="[`al-col-${cell.column.id}`, { 'al-mono-col': cell.column.columnDef.meta?.mono }]"
+              :data-label="({ asset: '设备', headline: '内容', ts: '发生时间', dur: '持续时间' } as Record<string, string>)[cell.column.id]"
+            >
               <template v-if="cell.column.id === 'asset'">
                 <span class="al-asset">
                   <span class="al-bar" :style="{ background: levelColor(row.original) }" />
@@ -317,7 +327,7 @@ function closeDialog(): void {
                 v-if="!row.original.acked"
                 type="button"
                 class="al-ack"
-                :aria-label="`确认告警 ${row.original.headline || ''}`"
+                :aria-label="`确认告警 ${displayHeadline(row.original)}`"
                 @click.stop="askAck(row.original)"
               >确认</button>
               <span v-else class="al-acked-done mono">已确认</span>
@@ -356,7 +366,7 @@ function closeDialog(): void {
 .al-sel { display: inline-flex; align-items: center; gap: 8px;
   border: 1px solid var(--line-2); background: var(--bg2); color: var(--tx-hi);
   font-size: 11.5px; padding: 6px 12px; border-radius: var(--r-s); cursor: pointer;
-  min-height: 32px; }
+  min-height: 32px; min-width: 0; }
 .al-sel:hover { border-color: var(--cyan-dim); }
 .al-sel:focus-visible { outline: 2px solid var(--cyan-dim); outline-offset: 1px; }
 .al-pop { border: 1px solid var(--line-2); background: var(--bg1);
@@ -403,6 +413,28 @@ function closeDialog(): void {
 .al-acked-done { font-size: 10.5px; color: var(--tx-dim); }
 
 @media (max-width: 899.98px) {
-  .al-table th, .al-row td { padding: 6px 8px; font-size: 11px; }
+  .al-page { padding: 12px 10px 76px; }
+  .al-top { align-items: stretch; }
+  .al-chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .al-chip { justify-content: space-between; min-height: 44px; }
+  .al-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .al-sel, .al-bulk-btn { justify-content: space-between; min-height: 44px; width: 100%; }
+  .al-bulk { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .al-table { display: block; width: 100%; }
+  .al-table thead { display: none; }
+  .al-table tbody { display: block; width: 100%; }
+  .al-filters > div:empty { display: none; }
+  .al-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px;
+    padding: 10px; }
+  .al-row td { display: block; min-width: 0; padding: 0; font-size: 11px; }
+  .al-col-asset { grid-column: 1; grid-row: 1; }
+  .al-col-headline { grid-column: 1 / -1; grid-row: 2; overflow-wrap: anywhere; }
+  .al-col-ts, .al-col-dur { display: flex !important; gap: 6px; align-items: baseline; }
+  .al-col-ts { grid-column: 1; grid-row: 3; }
+  .al-col-dur { grid-column: 2; grid-row: 3; justify-content: flex-end; }
+  .al-col-ts::before, .al-col-dur::before { content: attr(data-label); color: var(--tx-dim);
+    font-family: var(--font-sans); font-size: 10px; white-space: nowrap; }
+  .al-act-col { grid-column: 2; grid-row: 1; width: auto; }
+  .al-ack { min-width: 56px; min-height: 40px; }
 }
 </style>

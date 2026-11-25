@@ -82,7 +82,11 @@ function send(q?: string): void {
 function retryAllowStale(): void {
   const t = messages.value
   for (let i = t.length - 1; i >= 0; i--) {
-    if (t[i].role === 'user') { send(t[i].text); return }
+    if (t[i].role === 'user') {
+      allowStale.value = true
+      send(t[i].text)
+      return
+    }
   }
 }
 
@@ -157,8 +161,8 @@ function kindOf(m: QaMsg): string {
     <div ref="listEl" class="qp-thread">
       <div v-if="!messages.length" class="qp-empty">
         <EmptyState
-          label="输入设备状态问题"
-          hint="答案基于确定性快照；无新鲜数据时系统拒绝回答而非猜测"
+          label="设备问答"
+          hint="回答依据设备数据；数据过旧时会提示你确认后再继续"
         />
       </div>
 
@@ -177,13 +181,13 @@ function kindOf(m: QaMsg): string {
         <div v-else class="qp-ai" :class="`qp-ai-${kindOf(m)}`">
           <!-- answer: violet bar + eyebrow + markdown + mono provenance -->
           <template v-if="kindOf(m) === 'answer'">
-            <div class="qp-eyebrow">AI 解读</div>
+            <div class="qp-eyebrow">模型回答</div>
             <div class="qp-answer-body">
               <MarkdownView :source="m.text" />
             </div>
             <div v-if="m.ref" class="qp-prov mono">
               <span>依据快照 {{ snapClock(m.ref.ts) }}</span>
-              <span :style="{ color: trustColor(m.ref.trust) }">trust {{ trustLabel(m.ref.trust) }}</span>
+              <span :style="{ color: trustColor(m.ref.trust) }">可信度 {{ trustLabel(m.ref.trust) }}</span>
               <span>{{ m.ref.provider || '—' }}</span>
             </div>
           </template>
@@ -200,14 +204,14 @@ function kindOf(m: QaMsg): string {
               class="qp-retry"
               :disabled="busy"
               @click="retryAllowStale"
-            >允许旧数据重答</button>
+            >确认并使用较旧数据</button>
           </template>
 
           <!-- provider_failed: WARN-bordered card, distinct copy -->
           <template v-else>
             <div class="qp-refuse-head qp-refuse-head-warn">
               <RefreshCw :size="14" :stroke-width="1.5" />
-              <span>模型故障</span>
+              <span>回答服务暂不可用</span>
             </div>
             <p class="qp-refuse-text">{{ m.text }}</p>
           </template>
@@ -218,8 +222,8 @@ function kindOf(m: QaMsg): string {
 
       <div v-if="busy" class="qp-msg qp-msg-ai">
         <div class="qp-ai qp-ai-thinking">
-          <span class="qp-eyebrow">AI 解读</span>
-          <span class="qp-thinking-text">思考中…</span>
+          <span class="qp-eyebrow">模型回答</span>
+          <span class="qp-thinking-text">正在生成回答…</span>
         </div>
       </div>
     </div>
@@ -231,7 +235,7 @@ function kindOf(m: QaMsg): string {
         class="qp-input"
         rows="2"
         :placeholder="allowStale
-          ? '允许旧数据已开启 — 无新鲜快照时改用最近快照回答'
+          ? '将使用较旧数据回答，结果可能不准确'
           : '输入问题，Enter 发送 / Shift+Enter 换行'"
         :disabled="busy || !assetId"
         @keydown.enter="onEnter"
@@ -250,7 +254,7 @@ function kindOf(m: QaMsg): string {
     <div class="qp-opts">
       <label class="qp-stale">
         <input v-model="allowStale" type="checkbox" class="qp-check">
-        <span>允许旧数据（无新鲜快照时不拒绝）</span>
+        <span>允许使用较旧数据回答</span>
       </label>
       <span v-if="gateRefusal" class="qp-gate-hint">上次问题被门禁拒绝</span>
     </div>

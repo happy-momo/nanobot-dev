@@ -12,6 +12,8 @@ snapshot is refused instead of driving the model to guess.
 
 from __future__ import annotations
 
+import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,7 @@ from ..config import load_config
 from ..config.model import AdviserConfig
 from ..core.asset_store import AssetStore
 from ..core.bus import EventBus
+from ..core.credential_vault import CredentialVault
 from ..core.scheduler import Supervisor
 from ..learn import FeedbackService
 from ..learn.learner import Learner
@@ -34,6 +37,11 @@ class AppState:
     def __init__(self, config: AdviserConfig, store: AssetStore, gateway: Any | None = None):
         self.config = config
         self.store = store
+        self.configuration_lock = asyncio.Lock()
+        self.credential_vault = CredentialVault(
+            store.workspace / ".connector_credentials.enc",
+            os.environ.get("EDGE_ADVISER_CREDENTIAL_KEY"),
+        )
 
         self.bus = EventBus(replay=1)
 
@@ -67,6 +75,7 @@ class AppState:
             report_gen=self.report_gen,
             learner=self.learner,
             default_regime=config.analysis_regime,
+            credential_lookup=self.credential_vault.get,
         )
 
     def heartbeat(self) -> None:
@@ -114,7 +123,8 @@ def build_state(config_path: str | Path, gateway: Any | None = None,
         cfg.workspace = Path(env_ws)
     store = AssetStore(cfg.workspace)
     for asset in cfg.assets:
-        store.ensure_asset(asset)
+        if asset.enabled:
+            store.ensure_asset(asset)
     return AppState(cfg, store, gateway=gateway)
 
 

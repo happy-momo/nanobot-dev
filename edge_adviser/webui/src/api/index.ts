@@ -9,7 +9,7 @@
 // All functions return the unwrapped `data` (or null/undefined per backend);
 // failures throw ApiError/UnauthorizedError (401 handling in http.ts).
 
-import { api, connectSSE, downloadFile } from './http'
+import { api, connectSSE, downloadFile, downloadJsonFile } from './http'
 
 // ---- shared payload/response types (field names == backend contract) ---- //
 
@@ -55,6 +55,62 @@ export const fetchOverview = (history = 8) =>
 export const fetchVersion = () => api.get<any>('/api/version')
 
 export const fetchConfig = () => api.get<any>('/api/config')
+export const fetchConfiguration = () => api.get<ConfigurationView>('/api/configuration')
+
+export interface ConfigurationMutationResult {
+  asset_id: string
+  warnings: string[]
+}
+
+export interface ConnectorSource {
+  kind: 'simulator' | 'rest' | 'mqtt' | 'opcua' | 'modbus'
+  url?: string
+  topic?: string
+  poll_interval_s?: number
+  credential_id?: string
+  params?: Record<string, unknown>
+}
+
+export interface AssetConfiguration {
+  asset_id: string
+  name: string
+  kind: string
+  description: string
+  sample_freq_s: number
+  window_s: number
+  enabled: boolean
+  metrics: Array<Record<string, unknown>>
+  source: ConnectorSource | null
+  credential_configured?: boolean
+  runtime?: Record<string, unknown>
+}
+
+export interface ConfigurationView {
+  assets: AssetConfiguration[]
+  credential_store_available: boolean
+  protocols: Record<string, 'ready' | 'planned'>
+}
+
+export interface AssetConfigurationInput extends Omit<AssetConfiguration, 'credential_configured' | 'runtime' | 'source'> {
+  source: ConnectorSource
+}
+
+export interface AssetBackup {
+  format: string
+  version: number
+  config_revision: string
+  asset: Record<string, unknown>
+  source: ConnectorSource | null
+  credentials_included: false
+}
+
+export interface ConnectorTestResult {
+  ok: boolean
+  runs: Array<{ run: number; ok: boolean; sample_count?: number; error?: string; issues?: string[] }>
+  total_samples: number
+  issues: string[]
+  sample_preview: Array<Record<string, unknown>>
+}
 
 /** Scheduler liveness (status ok|degraded + heartbeat age + per-asset data). */
 export const fetchHealth = () => api.get<any>('/api/health')
@@ -66,6 +122,25 @@ export const fetchStats = () => api.get<any>('/api/stats')
 
 /** Card wall: per-asset runtime (state/trust/coverage/latest_values/alerts). */
 export const fetchAssets = () => api.get<any>('/api/assets')
+export const createAssetConfiguration = (config: AssetConfigurationInput) =>
+  api.post<ConfigurationMutationResult>('/api/assets', config)
+export const updateAssetConfiguration = (id: string, config: AssetConfigurationInput) =>
+  api.put<ConfigurationMutationResult>(`/api/assets/${encodeURIComponent(id)}/configuration`, config)
+export const deleteAssetConfiguration = (id: string, revision: string) =>
+  api.delete<ConfigurationMutationResult & { history_preserved: boolean }>(
+    `/api/assets/${encodeURIComponent(id)}/configuration`, { expected_revision: revision })
+export const downloadAssetBackup = (id: string) =>
+  downloadJsonFile<AssetBackup>(
+    `/api/assets/${encodeURIComponent(id)}/backup.json`,
+    `${id}-backup.json`,
+  )
+export const putConnectorCredentials = (id: string, headers: Record<string, string>) =>
+  api.put<{ credential_id: string; configured: boolean }>(
+    `/api/connector-credentials/${encodeURIComponent(id)}`, { headers })
+export const deleteConnectorCredentials = (id: string) =>
+  api.delete<{ deleted: boolean }>(`/api/connector-credentials/${encodeURIComponent(id)}`)
+export const testConnector = (config: AssetConfigurationInput) =>
+  api.post<ConnectorTestResult>('/api/connectors/test', config)
 
 /** Full asset record + asset_md + downtime_windows + source_kind. */
 export const fetchAsset = (id: string) => api.get<any>(`/api/assets/${id}`)

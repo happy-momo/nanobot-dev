@@ -139,7 +139,7 @@ watch(() => props.assetId, (v, o) => {
     <!-- ─── left: date list ──────────────────────────────────────────────── -->
     <aside class="tr-list">
       <div class="tr-list-head">
-        <span class="eyebrow">REPORTS · 归档</span>
+        <span class="eyebrow">归档报告</span>
         <button
           type="button"
           class="tr-reload"
@@ -223,7 +223,7 @@ watch(() => props.assetId, (v, o) => {
         <ScopeBadge :meta="current.meta" />
 
         <!-- AI content (violet frame): the report markdown itself -->
-        <ObsPanel title="REPORT" :meta="current.date || selectedDate">
+        <ObsPanel title="报告内容" :meta="current.date || selectedDate">
           <template #actions>
             <span class="tr-ai-marker">AI</span>
           </template>

@@ -2,6 +2,7 @@ from .base import DataSource, AsyncDataSource, Sample
 from .factory import MqttSource, ModbusSource, OpcUaSource
 from .rest import RestSource
 from .simulator import SimulatorSource
+from dataclasses import replace
 
 _source_classes = {
     SimulatorSource.kind: SimulatorSource,
@@ -12,7 +13,7 @@ _source_classes = {
 }
 
 
-def create_source(spec) -> DataSource:
+def create_source(spec, credentials: dict[str, str] | None = None) -> DataSource:
     """Build a data source from a SourceSpec.
 
     Unknown kinds raise ValueError; unwired protocol skeletons raise
@@ -25,7 +26,8 @@ def create_source(spec) -> DataSource:
     except (KeyError, AttributeError):
         raise ValueError(f"unknown source kind: {spec.kind}") from None
     try:
-        return cls(spec)
+        resolved = replace(spec, credentials=credentials) if credentials is not None else spec
+        return cls(resolved)
     except TypeError as exc:
         if "abstract" in str(exc):
             raise NotImplementedError(

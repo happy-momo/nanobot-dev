@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// TabSettings — the 设置 tab (spec §5.2, engineer role): read-only asset
+// TabSettings — the 设置 tab (spec §5.2): read-only asset
 // profile (描述/采样频率/分析窗口/数据源) + per-metric threshold editing
 // (MetricBand strip + inline form → PATCH /metrics/{key}/thresholds) +
 // planned-downtime windows (display) + footer 提交反馈 (textarea → sendFeedback).
@@ -279,7 +279,7 @@ async function submitFeedback(): Promise<void> {
   <div class="ts">
     <!-- ─── profile + downtime ───────────────────────────────────────────── -->
     <div class="ts-left">
-      <ObsPanel title="ASSET — 设备档案">
+      <ObsPanel title="设备档案">
         <EmptyState v-if="loadError" label="档案加载失败" :hint="loadError" />
         <template v-else-if="detail">
           <div class="ts-profile">
