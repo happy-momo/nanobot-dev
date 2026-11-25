@@ -49,6 +49,7 @@ def asset_from_dict(d: dict[str, Any]) -> AssetSpec:
         sample_freq_s=d.get("sample_freq_s", 1.0),
         window_s=d.get("window_s", 60),
         downtime_windows=list(d.get("downtime_windows", [])),
+        enabled=bool(d.get("enabled", True)),
     )
 
 
@@ -84,6 +85,7 @@ def load_config(path: str | Path) -> AdviserConfig:
             url=d.get("url", ""),
             topic=d.get("topic", ""),
             poll_interval_s=d.get("poll_interval_s", 1.0),
+            credential_id=d.get("credential_id", ""),
             credentials=d.get("credentials", {}),
         ))
 

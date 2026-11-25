@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -60,6 +60,7 @@ class Supervisor:
     monitor_interval_s: float = 60.0
     # N9: regime label injected by the caller (replaces the hardcoded "degrade").
     default_regime: str | None = None
+    credential_lookup: Callable[[str], dict[str, str]] | None = None
     _sources: dict[str, DataSource] = field(default_factory=dict)
     _state: dict[str, ScheduleState] = field(default_factory=dict)
 
@@ -68,12 +69,9 @@ class Supervisor:
         for spec in self._iter_sources():
             if spec.asset_id not in self._sources:
                 try:
-                    self._sources[spec.asset_id] = create_source(spec)
+                    self._sources[spec.asset_id] = self.prepare_source(spec)
                 except NotImplementedError as exc:
-                    # a configured-but-unwired source (mqtt/opcua/modbus
-                    # skeletons) must be visible in the audit trail, not just
-                    # the log — otherwise "asset configured, never collected"
-                    # is discoverable only by noticing the empty dashboards
+                    # Keep configured-but-unavailable sources visible in the audit trail.
                     logger.warning("source not available for {a}: {e}", a=spec.asset_id, e=exc)
                     log_run_event(self.store, spec.asset_id, "serve_start", "no_data",
                                   reason=f"source_unwired: {spec.kind.value}",
@@ -81,6 +79,8 @@ class Supervisor:
         # P4: warn + audit any asset with zero snapshots at startup so a cold
         # asset is never silently treated as healthy.
         for asset in self.config.assets:
+            if not asset.enabled:
+                continue
             if not self.store.list_snapshots(asset.asset_id, limit=1):
                 msg = f"asset {asset.asset_id} has no snapshots at startup"
                 logger.warning(msg)
@@ -99,11 +99,46 @@ class Supervisor:
     def _iter_sources(self):
         # one source per asset (first match); if none configured, warn
         for asset in self.config.assets:
+            if not asset.enabled:
+                continue
             spec = next((s for s in self.config.sources if s.asset_id == asset.asset_id), None)
             if spec is None:
                 logger.warning("no source for asset {a}; skipping", a=asset.asset_id)
                 continue
             yield spec
+
+    def prepare_source(self, spec: SourceSpec) -> DataSource:
+        credentials = None
+        if spec.credential_id and self.credential_lookup is not None:
+            credentials = self.credential_lookup(spec.credential_id)
+        return create_source(spec, credentials=credentials)
+
+    async def install_source(self, asset_id: str, replacement: DataSource) -> str | None:
+        """Swap a prepared source and close the previous connection."""
+        previous = self._sources.get(asset_id)
+        self._sources[asset_id] = replacement
+        if previous is not None:
+            try:
+                await previous.aclose()
+            except Exception as exc:
+                logger.warning("old source close failed for {a}: {e}", a=asset_id, e=exc)
+                return "旧连接器关闭异常，建议重启服务确认连接释放"
+        return None
+
+    async def replace_source(self, spec: SourceSpec) -> None:
+        """Create a replacement before swapping, preserving the active source on failure."""
+        replacement = self.prepare_source(spec)
+        await self.install_source(spec.asset_id, replacement)
+
+    async def remove_source(self, asset_id: str) -> str | None:
+        previous = self._sources.pop(asset_id, None)
+        if previous is not None:
+            try:
+                await previous.aclose()
+            except Exception as exc:
+                logger.warning("source close failed for {a}: {e}", a=asset_id, e=exc)
+                return "连接器关闭异常，建议重启服务确认连接释放"
+        return None
 
     def _save_and_prune(self, asset_id: str, snap_dict: dict[str, Any]) -> None:
         """Archive a snapshot with configured retention (best-effort pruning)."""
@@ -319,6 +354,8 @@ async def _main(supervisor: Supervisor) -> None:
     try:
         while True:
             for asset in supervisor.config.assets:
+                if not asset.enabled:
+                    continue
                 try:
                     await supervisor.run_once(asset)
                 except Exception as exc:  # noqa: BLE001

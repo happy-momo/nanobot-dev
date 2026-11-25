@@ -32,6 +32,8 @@ async def overview(request: Request, history: int = 0) -> Any:
     state: AppState = await _state(request)
     cards: list[dict[str, Any]] = []
     for a in state.config.assets:
+        if not a.enabled:
+            continue
         gate = gate_snapshot_for_read(state.store, a, state.config)
         snap = gate.snapshot or {}
         latest_values: dict[str, float | None] = {}
@@ -165,7 +167,7 @@ async def version(request: Request) -> Any:
         "version": ver,
         "demo": state.config.demo,
         "pin_enabled": state.config.hmi_pin != "none",
-        "assets": len(state.config.assets),
+        "assets": sum(1 for a in state.config.assets if a.enabled),
         "monitor_interval_s": state.config.monitor_interval_s,
     })
 

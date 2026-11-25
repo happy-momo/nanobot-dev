@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from ..analytics.gates import gate_snapshot_for_read
 from .deps import AppState
-from .schemas import asset_to_dict, fail, metric_to_dict, ok
+from .schemas import asset_to_dict, fail, metric_to_dict, ok, source_to_dict
 
 router = APIRouter(prefix="/api", tags=["assets"])
 
@@ -40,6 +40,9 @@ def _client_assets(state: AppState) -> list[dict[str, Any]]:
             "window_end": snap.get("window_end", ""),
             "state_reason": gate.reason or snap.get("state_reason", ""),
         }
+        source = next((s for s in state.config.sources if s.asset_id == a.asset_id), None)
+        d["source_kind"] = source.kind.value if source else None
+        d["credential_configured"] = bool(source and source.credential_id)
         out.append(d)
     return out
 
@@ -61,6 +64,10 @@ async def get_asset(request: Request, asset_id: str) -> Any:
     d["downtime_windows"] = asset.downtime_windows
     src = next((s for s in state.config.sources if s.asset_id == asset_id), None)
     d["source_kind"] = src.kind.value if src else None
+    d["source"] = ({
+        **source_to_dict(src, redact_secrets=True, include_credential_id=False),
+        "credential_configured": bool(src.credential_id),
+    } if src else None)
     return ok(data=d)
 
 

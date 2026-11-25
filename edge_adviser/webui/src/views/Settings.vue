@@ -1,234 +1,239 @@
 <script setup lang="ts">
-// System settings: read-only view of the deterministic tuning knobs + provider
-// status + a new service card (version/health/demo). Editing live config is
-// deliberately out of the read-first HMI scope (change config then restart).
-// This page exists so the field engineer can SEE the trustworthiness policy
-// actually in force. Loading/error/retry states wired.
-import { ref, computed, onMounted } from 'vue'
-import { api } from '../api/http'
+// Settings — asset connector configuration followed by three read-only panels.
+//  * 服务状态: /api/version (版本/DEMO/资产数/PIN) + /api/health (健康/
+//    调度器/心跳/网关/有快照资产数)
+//  * 运行观测: /api/stats — provider 成功率/调用数/gated_refusals/MTTA/
+//    磁盘/每资产快照数
+//  * 运行参数: /api/config 只读 (cron/门禁/PIN/工作区) — an industrial HMI
+//    reads first; editing live config happens offline (change + restart)
+// The global DEMO banner (red text across the app top when demo=true) is
+// wired here per the brief — App.vue passes rt.demo already to the rail's
+// vertical flag; this adds the horizontal top banner.
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { fetchConfig, fetchHealth, fetchStats, fetchVersion } from '../api'
 import { useRuntime } from '../stores/runtime'
-import PageHeader from '../components/PageHeader.vue'
+import ObsPanel from '../components/ObsPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
+import ConfigurationManager from '../components/ConfigurationManager.vue'
 
 const rt = useRuntime()
-const cfg = ref<any>(null)
-const ver = ref<any>(null)
-const health = ref<any>(null)
-const stats = ref<any>(null)
-const loading = ref(false)
-const errored = ref(false)
 
-async function load() {
+const version = ref<Record<string, any> | null>(null)
+const health = ref<Record<string, any> | null>(null)
+const stats = ref<Record<string, any> | null>(null)
+const config = ref<Record<string, any> | null>(null)
+const loadError = ref('')
+const loading = ref(false)
+
+async function load(): Promise<void> {
   loading.value = true
-  errored.value = false
+  loadError.value = ''
   try {
-    const [c, v, h, s] = await Promise.all([
-      api.get<any>('/api/config'),
-      api.get<any>('/api/version'),
-      api.get<any>('/api/health'),
-      api.get<any>('/api/stats').catch(() => null),  // stats is supplementary
+    // stats is supplementary (a fresh workspace may have nothing to aggregate)
+    const [v, h, s, c] = await Promise.all([
+      fetchVersion(), fetchHealth(), fetchStats().catch(() => null), fetchConfig(),
     ])
-    cfg.value = c
-    ver.value = v
-    health.value = h
-    stats.value = s
-  } catch {
-    errored.value = true
+    version.value = v || null
+    health.value = h || null
+    stats.value = s || null
+    config.value = c || null
+  } catch (e) {
+    loadError.value = e instanceof Error ? e.message : '设置信息加载失败'
   } finally {
     loading.value = false
   }
 }
 
-onMounted(load)
+onMounted(() => { load() })
 
-const strategy = [
-  { k: 'data_freshness_s', label: '数据新鲜度阈值(s)', hint: '超过该秒数视为数据过时，门禁拒绝模型' },
-  { k: 'coverage_threshold', label: '覆盖率阈值', hint: '低于则判 PARTIAL，可信度降级' },
-  { k: 'max_empty_windows', label: '连续空窗判定', hint: '连续 N 个空窗口判 OFFLINE(断连)' },
-  { k: 'learn_gate', label: '学习闸门', hint: 'off/soft/strict —— 坏数据是否写回 MEMORY.md' },
-  { k: 'memory_index', label: '记忆检索', hint: 'off=最近优先 / keywords=关键词相关' },
-  { k: 'memory_conflict_policy', label: '记忆冲突策略', hint: 'off=忽略 / flag=标记冲突与陈旧' },
-  { k: 'memory_decay_s', label: '记忆衰减(s)', hint: '超过则视为陈旧知识被降权' },
-  { k: 'runlog_enabled', label: '审计账本', hint: '是否记录 runlog.jsonl' },
-]
+// 60s refresh: heartbeat age / tick age are the only live numbers here
+let timer: number | null = null
+onMounted(() => { timer = window.setInterval(load, 60_000) })
+onBeforeUnmount(() => { if (timer !== null) window.clearInterval(timer) })
 
-function val(k: string) {
-  return cfg.value?.[k]
+// ------------------------------------------------------------- formatting --
+function fmtBytes(b: number | null | undefined): string {
+  if (typeof b !== 'number' || !Number.isFinite(b)) return '—'
+  if (b < 1024) return `${b}B`
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)}KB`
+  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)}MB`
+  return `${(b / 1024 / 1024 / 1024).toFixed(2)}GB`
+}
+function fmtS(v: number | null | undefined): string {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return '—'
+  if (v < 60) return `${Math.round(v)}s`
+  if (v < 3600) return `${Math.round(v / 60)}m`
+  return `${(v / 3600).toFixed(1)}h`
+}
+function fmtPct(v: number | null | undefined): string {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return '—'
+  return `${Math.round(v * 100)}%`
 }
 
-const providerKeys = computed(() => (cfg.value?.providers ? Object.keys(cfg.value.providers) : []))
+const providers = computed(() => stats.value?.providers || null)
+const alertsMeta = computed(() => stats.value?.alerts || null)
+const storage = computed(() => stats.value?.storage || null)
+const perAsset = computed<Array<Record<string, any>>>(() => stats.value?.assets || [])
+const sched = computed(() => health.value?.scheduler || null)
 
-function fmtPct(r: number | null | undefined) {
-  return r == null ? '—' : `${Math.round(r * 100)}%`
-}
-function fmtMtta(s: number | null | undefined) {
-  if (s == null) return '—'
-  return s < 90 ? `${Math.round(s)}s` : `${Math.round(s / 60)}min`
-}
-function fmtGb(b: number | null | undefined) {
-  if (b == null) return '—'
-  return b > 1024 * 1024 * 1024
-    ? `${(b / 1024 / 1024 / 1024).toFixed(1)}GB` : `${Math.round(b / 1024 / 1024)}MB`
-}
+/** cron strings from config (deep_report_cron / learn_cron) */
+const crons = computed(() => [
+  { k: 'deep_report_cron', label: '深度报告' },
+  { k: 'learn_cron', label: '学习' },
+].map((x) => ({ ...x, v: config.value?.[x.k] || '未配置' })))
+
+const PARAM_ROWS = computed(() => [
+  { k: 'monitor_interval_s', label: '巡检间隔', v: config.value?.monitor_interval_s != null ? `${config.value.monitor_interval_s}s` : '—' },
+  { k: 'data_freshness_s', label: '新鲜度门禁', v: config.value?.data_freshness_s != null ? `${config.value.data_freshness_s}s` : '—' },
+  { k: 'coverage_threshold', label: '覆盖率阈值', v: config.value?.coverage_threshold ?? '—' },
+  { k: 'max_empty_windows', label: '离线判定空窗数', v: config.value?.max_empty_windows ?? '—' },
+  { k: 'learn_gate', label: '学习门禁', v: (config.value?.learn_gate || '—').toUpperCase() },
+  { k: 'memory_conflict_policy', label: '冲突策略', v: config.value?.memory_conflict_policy || '—' },
+  { k: 'hmi_pin_enabled', label: 'PIN 访问', v: config.value?.hmi_pin_enabled ? '已启用' : '未启用' },
+  { k: 'workspace', label: '工作区', v: config.value?.workspace || '—' },
+])
 </script>
 
 <template>
-  <div class="page">
-    <PageHeader title="系统设置" subtitle="确定性策略视图（只读）— 修改需编辑配置文件并重启服务">
-      <el-button size="small" @click="load" :loading="loading">刷新</el-button>
-    </PageHeader>
+  <div class="page st-page">
+    <!-- spec §5.6: demo=true → global red DEMO banner across the app top -->
+    <div v-if="rt.demo" class="st-demo-banner" role="status">
+      演示环境 · 使用模拟数据，不代表真实设备状态
+    </div>
 
-    <div v-if="loading" style="padding:40px;text-align:center" class="muted">加载中…</div>
+    <EmptyState v-if="loadError" label="设置信息加载失败" :hint="loadError" />
 
-    <EmptyState v-else-if="errored" icon="⚠️" text="配置加载失败"
-                hint="请确认后端服务正在运行">
-      <el-button size="small" type="primary" @click="load">重试</el-button>
-    </EmptyState>
+    <div v-else class="st-grid">
+      <ConfigurationManager />
 
-    <div v-else-if="cfg" class="grid">
-      <!-- service status -->
-      <el-card shadow="never" class="wide">
-        <template #header><b>服务状态</b></template>
-        <div class="svc">
-          <div class="svc-item">
-            <span class="muted small">版本</span>
-            <span class="num">{{ ver?.version || '—' }}</span>
+      <!-- ─── 服务状态 ─────────────────────────────────────────────────────── -->
+      <ObsPanel title="服务状态">
+        <div class="st-cells">
+          <div class="st-cell">
+            <span class="st-k">版本</span>
+            <span class="st-v mono">{{ version?.version || '—' }}</span>
           </div>
-          <div class="svc-item">
-            <span class="muted small">模式</span>
-            <el-tag v-if="ver?.demo" type="warning" size="small">DEMO（MockGateway）</el-tag>
-            <el-tag v-else type="success" size="small">生产</el-tag>
-          </div>
-          <div class="svc-item">
-            <span class="muted small">在册资产</span>
-            <span class="num">{{ ver?.assets ?? '—' }}</span>
-          </div>
-          <div class="svc-item">
-            <span class="muted small">有快照的资产</span>
-            <span class="num">{{ health?.assets_with_snapshots ?? '—' }} / {{ health?.assets ?? '—' }}</span>
-          </div>
-          <div class="svc-item">
-            <span class="muted small">监控周期</span>
-            <span class="num">{{ ver?.monitor_interval_s ?? cfg.monitor_interval_s }}s</span>
-          </div>
-          <div class="svc-item">
-            <span class="muted small">调度器</span>
-            <el-tag :type="health?.scheduler?.running ? 'success' : 'danger'" size="small">
-              {{ health?.scheduler?.running ? '运行中' : '未运行/已停止' }}
-            </el-tag>
-            <span v-if="health?.scheduler?.last_tick_age_s != null" class="muted small">
-              上次 tick {{ Math.round(health.scheduler.last_tick_age_s) }}s 前
+          <div class="st-cell">
+            <span class="st-k">健康</span>
+            <span class="st-v" :style="{ color: health?.status === 'ok' ? 'var(--ok)' : 'var(--warn)' }">
+              {{ health?.status === 'ok' ? '正常' : (health?.status || '—') }}
             </span>
           </div>
-          <div class="svc-item">
-            <span class="muted small">健康检查</span>
-            <el-tag :type="health?.status === 'ok' ? 'success' : 'warning'" size="small">
-              {{ health?.status || '—' }}
-            </el-tag>
+          <div class="st-cell">
+            <span class="st-k">资产</span>
+            <span class="st-v mono">
+              {{ health?.assets_with_snapshots ?? '—' }} / {{ health?.assets ?? '—' }} 有快照
+            </span>
           </div>
-          <div class="svc-item">
-            <span class="muted small">网关</span>
-            <span class="num">{{ health?.gateway || '—' }}</span>
+          <div class="st-cell">
+            <span class="st-k">调度器</span>
+            <span class="st-v" :style="{ color: sched?.running ? 'var(--ok)' : 'var(--crit)' }">
+              {{ sched?.running ? '运行中' : '未运行' }}
+            </span>
+            <span v-if="sched?.last_tick_age_s != null" class="st-sub mono">
+              上次运行于 {{ Math.round(sched.last_tick_age_s) }} 秒前
+            </span>
+          </div>
+          <div class="st-cell">
+            <span class="st-k">网关</span>
+            <span class="st-v">{{ health?.gateway || '—' }}</span>
+          </div>
+          <div class="st-cell">
+            <span class="st-k">PIN</span>
+            <span class="st-v">{{ version?.pin_enabled ? '已启用' : '未启用' }}</span>
           </div>
         </div>
-      </el-card>
+      </ObsPanel>
 
-      <el-card shadow="never">
-        <template #header><b>可信度策略（确定性，非模型判断）</b></template>
-        <div v-for="s in strategy" :key="s.k" class="row">
-          <div>
-            <div><b>{{ s.label }}</b> <el-tag size="small" type="info">{{ val(s.k) }}</el-tag></div>
-            <div class="muted small">{{ s.hint }}</div>
+      <!-- ─── 运行观测 ─────────────────────────────────────────────────────── -->
+      <ObsPanel title="运行统计">
+        <div class="st-cells">
+          <div class="st-cell">
+            <span class="st-k">模型成功率</span>
+            <span class="st-v mono" :style="{ color: (providers?.success_rate ?? 0) >= 0.9 ? 'var(--ok)' : 'var(--warn)' }">
+              {{ fmtPct(providers?.success_rate) }}</span>
+            <span class="st-sub mono">{{ providers?.ok ?? '—' }} / {{ providers?.calls ?? '—' }} 次调用</span>
+          </div>
+          <div class="st-cell">
+            <span class="st-k">门禁拦截</span>
+            <span class="st-v mono">{{ providers?.gated_refusals ?? '—' }}</span>
+          </div>
+          <div class="st-cell">
+            <span class="st-k">MTTA</span>
+            <span class="st-v mono">{{ fmtS(alertsMeta?.mtta_s) }}</span>
+            <span class="st-sub mono">告警 {{ alertsMeta?.total ?? '—' }} · 未确认 {{ alertsMeta?.unacked ?? '—' }}</span>
+          </div>
+          <div class="st-cell">
+            <span class="st-k">工作区</span>
+            <span class="st-v mono">{{ fmtBytes(storage?.workspace_bytes) }}</span>
+          </div>
+          <div class="st-cell">
+            <span class="st-k">磁盘剩余</span>
+            <span class="st-v mono">{{ fmtBytes(storage?.disk_free_bytes) }}</span>
+          </div>
+          <div class="st-cell">
+            <span class="st-k">平均耗时</span>
+            <span class="st-v mono">{{ fmtS(providers?.avg_elapsed_s) }}</span>
           </div>
         </div>
-      </el-card>
 
-      <el-card shadow="never">
-        <template #header>
-          <b>模型 Provider</b>
-          <el-tag v-if="!providerKeys.length" type="warning" size="small" style="margin-left:8px">
-            未配置（demo 模式使用 MockGateway）
-          </el-tag>
-        </template>
-        <div v-if="!providerKeys.length" class="muted small" style="padding:8px 0">
-          demo 模式下问答/报告/学习由确定性 MockGateway 生成，无需真实模型。
-        </div>
-        <div v-for="rk in providerKeys" :key="rk" class="provider">
-          <div class="phead">
-            <el-tag size="small" type="info">{{ rk }}</el-tag>
-            <b>{{ cfg.providers[rk].model || cfg.providers[rk].model_preset }}</b>
+        <div v-if="perAsset.length" class="st-perasset">
+          <div v-for="a in perAsset" :key="a.asset_id" class="st-pa-row">
+            <span class="st-pa-name">{{ rt.assetById(a.asset_id)?.name || a.asset_id }}</span>
+            <span class="st-pa-v mono">快照 {{ a.snapshot_count ?? '—' }}/{{ a.snapshot_cap ?? '—' }}</span>
+            <span class="st-pa-v mono">审计 {{ a.runlog_rows ?? '—' }}</span>
+            <span class="st-pa-v mono">磁盘 {{ fmtBytes(a.disk_bytes) }}</span>
           </div>
-          <div class="muted small">preset={{ cfg.providers[rk].model_preset }} · api_base={{ cfg.providers[rk].api_base || '—' }}</div>
-          <div class="muted small">timeout={{ cfg.providers[rk].timeout_s }}s · max_tokens={{ cfg.providers[rk].max_tokens }}</div>
         </div>
-      </el-card>
+      </ObsPanel>
 
-      <el-card shadow="never" class="wide">
-        <template #header>
-          <b>运行观测</b>
-          <span class="muted small" style="margin-left:8px">模型成效 · 告警响应 · 磁盘占用（来自审计账本，只读）</span>
-        </template>
-        <div v-if="stats" class="svc">
-          <div class="svc-item">
-            <span class="muted small">模型调用成功率</span>
-            <span class="num">{{ fmtPct(stats.providers?.success_rate) }}</span>
-            <span class="muted small">{{ stats.providers?.ok ?? 0 }} / {{ stats.providers?.calls ?? 0 }} 次成功</span>
+      <!-- ─── 运行参数（只读） ─────────────────────────────────────────────── -->
+      <ObsPanel title="运行参数">
+        <div class="st-cells">
+          <div v-for="row in PARAM_ROWS" :key="row.k" class="st-cell">
+            <span class="st-k">{{ row.label }}</span>
+            <span class="st-v mono">{{ row.v }}</span>
           </div>
-          <div class="svc-item">
-            <span class="muted small">平均 / 最大耗时</span>
-            <span class="num">{{ stats.providers?.avg_elapsed_s ?? '—' }}s / {{ stats.providers?.max_elapsed_s ?? '—' }}s</span>
-          </div>
-          <div class="svc-item">
-            <span class="muted small">门禁拒绝次数</span>
-            <span class="num">{{ stats.providers?.gated_refusals ?? 0 }}</span>
-          </div>
-          <div class="svc-item">
-            <span class="muted small">告警确认时长 MTTA</span>
-            <span class="num">{{ fmtMtta(stats.alerts?.mtta_s) }}</span>
-            <span class="muted small">未确认 {{ stats.alerts?.unacked ?? 0 }} 条</span>
-          </div>
-          <div class="svc-item">
-            <span class="muted small">工作区占用</span>
-            <span class="num">{{ stats.storage?.workspace_mb ?? '—' }} MB</span>
-            <span class="muted small">磁盘剩余 {{ fmtGb(stats.storage?.disk_free_bytes) }}</span>
-          </div>
-          <div class="svc-item" v-for="a in stats.assets || []" :key="a.asset_id">
-            <span class="muted small">{{ a.asset_id }} · 快照/上限</span>
-            <span class="num">{{ a.snapshot_count }} / {{ a.snapshot_cap }}</span>
-            <span class="muted small">审计 {{ a.runlog_rows }} / {{ a.runlog_cap }} 行</span>
+          <div v-for="c in crons" :key="c.k" class="st-cell">
+            <span class="st-k">{{ c.label }}计划</span>
+            <span class="st-v mono">{{ c.v }}</span>
           </div>
         </div>
-        <div v-else class="muted small" style="padding:8px 0">观测数据不可用</div>
-      </el-card>
-
-      <el-card shadow="never" class="wide">
-        <template #header><b>运行参数</b></template>
-        <div class="kv">
-          <div><span class="muted">工作区</span> <span class="mono">{{ cfg.workspace }}</span></div>
-          <div><span class="muted">深度报告</span> <span class="mono">{{ cfg.deep_report_cron }}</span></div>
-          <div><span class="muted">历史学习</span> <span class="mono">{{ cfg.learn_cron }}</span></div>
-          <div><span class="muted">HMI PIN</span> {{ cfg.hmi_pin_enabled ? '已启用（共享 PIN）' : '未启用（局域网开放）' }}</div>
-          <div><span class="muted">演示模式</span> {{ cfg.demo ? '开启' : '关闭' }}</div>
-        </div>
-      </el-card>
+        <p class="st-note">运行参数只读展示 — 修改需在服务器编辑配置后重启服务。</p>
+      </ObsPanel>
     </div>
   </div>
 </template>
 
 <style scoped>
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.wide { grid-column: 1 / -1; }
-.row { padding: 8px 0; border-bottom: 1px solid var(--ea-border); }
-.row:last-child { border-bottom: none; }
-.provider { padding: 8px 0; border-bottom: 1px solid var(--ea-border); }
-.provider:last-child { border-bottom: none; }
-.phead { font-size: 14px; display: flex; align-items: center; gap: 8px; }
-.kv { display: flex; flex-direction: column; gap: 8px; }
-.small { font-size: 12px; }
-.svc { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.svc-item { display: flex; flex-direction: column; gap: 4px; }
+.st-page { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px;
+  min-height: 0; flex: 1; overflow: hidden auto; }
 
-@media (max-width: 800px) {
-  .grid { grid-template-columns: 1fr; }
+.st-demo-banner { border: 1px solid var(--crit); background: color-mix(in srgb, var(--crit) 10%, var(--bg1));
+  color: var(--crit); font-size: 12px; letter-spacing: .14em; font-weight: 700;
+  padding: 8px 14px; border-radius: var(--r-s); text-align: center; }
+
+.st-grid { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.st-cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.st-cell { display: flex; flex-direction: column; gap: 3px; padding: 10px 14px;
+  border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); min-width: 0; }
+.st-cell:nth-last-child(-n+1) { border-bottom: 0; }
+.st-k { font-size: 9.5px; letter-spacing: .1em; color: var(--tx-dim); }
+.st-v { font-size: 12.5px; color: var(--tx-hi); overflow-wrap: anywhere; }
+.st-sub { font-size: 10px; color: var(--tx-dim); font-variant-numeric: tabular-nums; }
+
+.st-perasset { border-top: 1px solid var(--line); }
+.st-pa-row { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  padding: 7px 14px; border-bottom: 1px solid var(--line); }
+.st-pa-row:last-child { border-bottom: 0; }
+.st-pa-name { font-size: 11.5px; color: var(--tx-hi); min-width: 90px; }
+.st-pa-v { font-size: 10.5px; color: var(--tx-dim); font-variant-numeric: tabular-nums; }
+
+.st-note { margin: 0; padding: 8px 14px 10px; font-size: 10.5px;
+  color: var(--tx-dim); border-top: 1px solid var(--line); line-height: 1.5; }
+
+@media (max-width: 699.98px) {
+  .st-cell { border-right: 0; }
 }
 </style>

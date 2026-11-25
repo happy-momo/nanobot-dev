@@ -1,26 +1,20 @@
+<script setup lang="ts">
+// EmptyState — centered eyebrow-style caption + one "what to do" line (spec §2:
+// 空状态不用插画，一句人话，如「暂无告警 — 全场判定正常」).
+defineProps<{ label: string; hint?: string }>()
+</script>
+
 <template>
-  <div class="empty-state">
-    <div class="glyph">{{ icon }}</div>
-    <div class="text">{{ text }}</div>
-    <div class="hint muted" v-if="hint">{{ hint }}</div>
-    <div class="cta" v-if="$slots.default"><slot /></div>
+  <div class="es">
+    <span class="es-label">{{ label }}</span>
+    <span v-if="hint" class="es-hint">{{ hint }}</span>
   </div>
 </template>
 
-<script setup lang="ts">
-// Uniform empty state with optional CTA slot.
-withDefaults(defineProps<{ text: string; hint?: string; icon?: string }>(), {
-  icon: '⛔',
-})
-</script>
-
 <style scoped>
-.empty-state {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 56px 20px; gap: 8px; text-align: center;
-}
-.glyph { font-size: 40px; opacity: 0.7; }
-.text { font-size: 14px; color: var(--ea-text); }
-.hint { font-size: 12px; }
-.cta { margin-top: 10px; }
+.es { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; padding: 30px 16px; text-align: center; }
+.es-label { font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--tx-dim); font-weight: 600; }
+.es-hint { font-size: 12px; color: var(--tx-dim); }
 </style>

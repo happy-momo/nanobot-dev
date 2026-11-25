@@ -93,6 +93,8 @@ async def _scheduler_loop(state: AppState) -> None:
     while True:
         state.heartbeat()  # scheduler liveness for /api/health
         for asset in state.config.assets:
+            if not asset.enabled:
+                continue
             try:
                 snap = await state.supervisor.run_once(asset)
                 # A snapshot with an "error" note is still a fact (e.g. an
@@ -195,6 +197,29 @@ def create_app(config_path: str | Path, gateway: Any | None = None,
                 if resp is not None:
                     return resp
             return await call_next(request)
+    else:
+        # Configuration endpoints can expose connector topology and bind
+        # existing backend credentials to an outbound destination. Keep them
+        # unavailable on an otherwise unauthenticated HMI.
+        @app.middleware("http")
+        async def configuration_pin_required(request: Request, call_next):
+            path = request.url.path
+            protected = (
+                path in {"/api/configuration", "/api/connectors/test"}
+                or path.startswith("/api/connector-credentials/")
+                or (path == "/api/assets" and request.method == "POST")
+                or (
+                    path.startswith("/api/assets/")
+                    and (path.endswith("/configuration") or path.endswith("/backup.json"))
+                )
+            )
+            if protected:
+                return JSONResponse(
+                    {"ok": False, "data": None,
+                     "error": "设备与连接器配置需要先启用 HMI PIN"},
+                    status_code=403,
+                )
+            return await call_next(request)
 
     app.include_router(assets_router)
     app.include_router(reports_router)
@@ -202,6 +227,8 @@ def create_app(config_path: str | Path, gateway: Any | None = None,
     app.include_router(overview_router)
     app.include_router(actions_router)
     app.include_router(stats_router)
+    from .router_configuration import router as configuration_router
+    app.include_router(configuration_router)
 
     if state.config.demo and not pin_enabled:
         # Demo mode ships with hmi_pin="none" — every write endpoint would be

@@ -115,8 +115,9 @@ async def report(request: Request, asset_id: str,
     if asset is None:
         return fail("unknown asset")
 
+    token = uuid4().hex  # minted HERE so the client's stream matches the task
     async def _run() -> None:
-        async with _task(state, asset_id, "report") as task:
+        async with _task(state, asset_id, "report", token=token) as task:
             started = time.time()
             try:
                 res = await state.supervisor.run_deep_report(asset)
@@ -136,7 +137,6 @@ async def report(request: Request, asset_id: str,
                 task.mark_failed()
 
     background.add_task(_run)
-    token = uuid4().hex  # announce the token so the client can open its stream
     await state.bus.publish(KIND_TASK, asset_id,
                             payload={"token": token, "kind": "report", "phase": "queued"})
     return ok(data={"token": token, "queued": True})
@@ -152,8 +152,9 @@ async def learn(request: Request, asset_id: str,
     if asset is None:
         return fail("unknown asset")
 
+    token = uuid4().hex
     async def _run() -> None:
-        async with _task(state, asset_id, "learn") as task:
+        async with _task(state, asset_id, "learn", token=token) as task:
             started = time.time()
             try:
                 res = await state.supervisor.run_learn(asset)
@@ -172,7 +173,6 @@ async def learn(request: Request, asset_id: str,
                 task.mark_failed()
 
     background.add_task(_run)
-    token = uuid4().hex
     await state.bus.publish(KIND_TASK, asset_id,
                             payload={"token": token, "kind": "learn", "phase": "queued"})
     return ok(data={"token": token, "queued": True})
@@ -234,11 +234,16 @@ async def ask(request: Request, asset_id: str, body: AskIn) -> Any:
 
 # A tiny context manager so write actions are traceable in the task stream.
 class _task:
-    def __init__(self, state: AppState, asset_id: str, kind: str):
+    def __init__(self, state: AppState, asset_id: str, kind: str,
+                 token: str | None = None):
         self.state = state
         self.asset_id = asset_id
         self.kind = kind
-        self.token = uuid4().hex  # unique per action so /stream/task/{token} can isolate it
+        # token is shared with the endpoint that announced it (report/learn
+        # return the token BEFORE the background task runs) so the client's
+        # /stream/task/{token} subscription matches start/done. run-now and
+        # other inline callers let _task mint its own.
+        self.token = token or uuid4().hex  # unique per action so /stream/task/{token} can isolate it
         self.failed = False  # set by handlers returning fail() so __aexit__ reports it
 
     async def __aenter__(self):

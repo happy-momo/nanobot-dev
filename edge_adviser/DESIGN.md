@@ -109,7 +109,7 @@ nanobot 本身有 `FallbackProvider`，但这里我们在**编排层**做任务�
         ▼                        ▼                ▼
    DataIngest               Analytics        LLMGateway
    数据源连接器              确定性分析          多Provider+降级
-   · MQTT/OPC-UA/Modbus   → AnalyticsSnapshot   +上下文注入
+   · MQTT/OPC-UA/Modbus TCP → AnalyticsSnapshot +上下文注入
    · REST/HTTP 拉取                              →Nanobot SDK
    · 模拟数据源(MVP)                          (bot.run/stream)
         │                        │                │
@@ -152,7 +152,7 @@ edge_adviser/
     ingest/
       base.py           # DataSource 抽象基类
       simulator.py      # 模拟数据源(漂移+故障注入), MVP 用
-      mqtt.py / opcua.py / modbus.py / rest.py   # 真实源, 骨架
+      mqtt.py / opcua.py / modbus.py / rest.py   # 真实源
     llm/
       gateway.py        # LLMGateway: 多Provider路由+降级+token预算
       context.py        # 上下文构建: 资产档案+快照+检索知识+上期摘要

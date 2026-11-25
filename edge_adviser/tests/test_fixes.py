@@ -15,6 +15,7 @@ _HERE = Path(__file__).resolve().parent.parent / "edge_adviser"
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from edge_adviser import __version__  # noqa: E402
 from edge_adviser.config.model import SourceSpec, SourceKind  # noqa: E402
 from edge_adviser.ingest.simulator import SimulatorSource  # noqa: E402
 
@@ -239,7 +240,7 @@ def test_version_and_config_demo_fields(tmp_path: Path) -> None:
     assert v["service"] == "edge-adviser-hmi"
     assert v["demo"] is False
     assert v["assets"] == 1
-    assert "version" in v
+    assert v["version"] == __version__
     cfgv = c.get("/api/config").json()["data"]
     assert "demo" in cfgv
 

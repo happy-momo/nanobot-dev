@@ -1,6 +1,6 @@
 [project]
 name = "edge-adviser"
-version = "0.4.4"
+version = "0.5.0"
 description = "Edge-deployed equipment intelligence agent built on nanobot."
 requires-python = ">=3.11"
 dependencies = [
@@ -13,6 +13,10 @@ dependencies = [
     # a Docker install must not depend on another package's dependency tree
     "loguru>=0.7",
     "aiohttp>=3.9",
+    "cryptography>=42",
+    "aiomqtt>=2.4",
+    "asyncua>=1.1,<2",
+    "pymodbus>=3.11,<4",
 ]
 
 [project.scripts]
