@@ -16,12 +16,25 @@ knowledge. This store also keeps simple append-only feedback in
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ..config.model import AssetSpec
 from ..config.loader import ensure_default_asset_md
+
+
+def _atomic_write(path: Path, data: str) -> None:
+    """Write ``data`` to ``path`` atomically (tmp file + os.replace).
+
+    A crash mid-write on a plain open(..., "w") leaves a truncated file; the
+    snapshot gates then treat the newest record as missing data and MEMORY.md
+    could lose accumulated knowledge. Same pattern as truncate_jsonl below.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(data, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 class AssetStore:
@@ -77,7 +90,7 @@ class AssetStore:
 
     def write_memory_md(self, asset_id: str, content: str) -> Path:
         p = self.memory_md(asset_id)
-        p.write_text(content, encoding="utf-8")
+        _atomic_write(p, content)
         return p
 
     # ------------------------------------------------------------------ #
@@ -95,8 +108,7 @@ class AssetStore:
             # silently overwrite the earlier record — disambiguate instead.
             suffix = datetime.now(timezone.utc).strftime("%H%M%S%f")
             p = self.snapshots_dir(asset_id) / f"{safe}-{suffix}.json"
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False, indent=2)
+        _atomic_write(p, json.dumps(snapshot, ensure_ascii=False, indent=2))
         if keep > 0:
             self.prune_snapshots(asset_id, keep)
         return p

@@ -132,13 +132,19 @@ const ageStale = computed(() => {
 // 报告(N) — the count of ARCHIVED report days, fetched once per asset.
 const reportCount = ref<number | null>(null)
 
+// seq guard: a slow report list for asset A must not become asset B's badge
+let reportCountSeq = 0
 async function loadReportCount() {
+  const mySeq = ++reportCountSeq
+  const asset = assetId.value
   reportCount.value = null
-  if (!assetId.value) return
+  if (!asset) return
   try {
-    const rows = await fetchReports(assetId.value)
+    const rows = await fetchReports(asset)
+    if (mySeq !== reportCountSeq || asset !== assetId.value) return
     reportCount.value = Array.isArray(rows) ? rows.length : 0
   } catch {
+    if (mySeq !== reportCountSeq || asset !== assetId.value) return
     reportCount.value = 0   // badge shows 0 rather than lying about the count
   }
 }

@@ -76,6 +76,16 @@ def load_config(path: str | Path) -> AdviserConfig:
 
     assets = [asset_from_dict(d) for d in raw.get("assets", [])]
 
+    # retention caps: reject obviously wrong values at load time instead of
+    # silently letting the dataclass defaults win (an operator tuning these
+    # down for a small disk must see the value actually take effect)
+    max_snapshots = int(raw.get("max_snapshots", 2000))
+    max_runlog_rows = int(raw.get("max_runlog_rows", 10000))
+    if max_snapshots < 10:
+        raise ValueError(f"max_snapshots must be >= 10, got {max_snapshots}")
+    if max_runlog_rows < 100:
+        raise ValueError(f"max_runlog_rows must be >= 100, got {max_runlog_rows}")
+
     sources: list[SourceSpec] = []
     for d in raw.get("sources", []):
         sources.append(SourceSpec(
@@ -109,6 +119,8 @@ def load_config(path: str | Path) -> AdviserConfig:
         memory_conflict_policy=raw.get("memory_conflict_policy", "flag"),
         memory_decay_s=raw.get("memory_decay_s", 7776000),
         runlog_enabled=raw.get("runlog_enabled", True),
+        max_snapshots=max_snapshots,
+        max_runlog_rows=max_runlog_rows,
         hmi_pin=raw.get("hmi_pin", "none"),
         hmi_host=raw.get("hmi_host", "0.0.0.0"),
         hmi_port=raw.get("hmi_port", 8000),

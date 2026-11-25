@@ -105,16 +105,24 @@ function seriesOf(key: string): Array<{ ts: number; v: number }> {
 }
 
 // ------------------------------------------------------- history + live merge --
+// seq guard: a slow snapshot fetch for asset A must never land after the
+// operator switched to asset B, and a stale refetch must never clobber newer
+// live SSE points already merged into history (refresh-tick + asset-switch
+// both call loadHistory while the previous request may still be in flight)
+let loadSeq = 0
 async function loadHistory() {
-  if (!props.assetId) return
+  const mySeq = ++loadSeq
+  const asset = props.assetId
+  if (!asset) return
   loading.value = true
   try {
-    const rows = await fetchSnapshots(props.assetId, 40, true)
+    const rows = await fetchSnapshots(asset, 40, true)
+    if (mySeq !== loadSeq || asset !== props.assetId) return
     history.value = Array.isArray(rows) ? rows : []
   } catch {
-    toast('历史快照加载失败', 'warn')
+    if (mySeq === loadSeq) toast('历史快照加载失败', 'warn')
   } finally {
-    loading.value = false
+    if (mySeq === loadSeq) loading.value = false
   }
 }
 
@@ -209,9 +217,12 @@ function fmtWindowEnd(value?: string): string {
 }
 
 async function loadReport() {
+  const mySeq = loadSeq
+  const asset = props.assetId
   report.value = null
   try {
-    const doc = await fetchReport(props.assetId, todayStr())
+    const doc = await fetchReport(asset, todayStr())
+    if (mySeq !== loadSeq || asset !== props.assetId) return
     if (doc?.report_md) report.value = doc
   } catch {
     /* 静默隐藏 */
@@ -234,12 +245,29 @@ interface AlertRow {
 const alerts = ref<AlertRow[]>([])
 
 async function loadAlerts() {
+  const mySeq = loadSeq
+  const asset = props.assetId
   try {
-    const rows = await fetchAlerts(props.assetId, false)
+    const rows = await fetchAlerts(asset, false)
+    if (mySeq !== loadSeq || asset !== props.assetId) return
     alerts.value = (Array.isArray(rows) ? rows : []).sort((a, b) => (b.ts || 0) - (a.ts || 0))
   } catch {
-    alerts.value = []
+    // failed read must not render as "无活跃告警": keep prior rows on asset
+    // switch, or surface an empty-but-failed state via toast on cold load
+    if (mySeq !== loadSeq || asset !== props.assetId) return
+    if (alerts.value.length) {
+      toast('活跃告警刷新失败，显示的可能是过期数据', 'warn')
+    } else {
+      alerts.value = []
+      alertsFailed.value = true
+    }
   }
+}
+
+const alertsFailed = ref(false)
+
+function resetAlertsState(): void {
+  alertsFailed.value = false
 }
 
 /** the left bar tone: subject is the actionable vocabulary (warn/critical/
@@ -276,6 +304,7 @@ async function ackOne(a: AlertRow) {
 
 // ---------------------------------------------------------------- lifecycle --
 async function loadAll() {
+  resetAlertsState()
   await loadHistory()
   loadReport()
   loadAlerts()
@@ -288,6 +317,7 @@ watch(() => props.assetId, (v, o) => {
   if (!v || v === o) return
   report.value = null
   alerts.value = []
+  alertsFailed.value = false
   loadAll()
 })
 </script>
@@ -365,6 +395,11 @@ watch(() => props.assetId, (v, o) => {
             <div class="al-body">{{ localizeConditionText(a.headline || a.reason) }}</div>
           </div>
         </template>
+        <EmptyState
+          v-else-if="alertsFailed"
+          label="告警加载失败"
+          :hint="`无法读取 ${displayName} 的活跃告警`"
+        />
         <EmptyState v-else label="无活跃告警" :hint="`${displayName} 当前无需处理`" />
       </ObsPanel>
     </div>

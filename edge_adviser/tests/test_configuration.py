@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -75,7 +76,8 @@ def test_credential_vault_encrypts_and_restricts_file_permissions(tmp_path: Path
     vault.put("cred-1", {"authorization": "Bearer highly-secret"})
 
     assert b"highly-secret" not in path.read_bytes()
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name == "posix":  # chmod is a no-op on Windows (mode stays 0o666)
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert CredentialVault(path, key).get("cred-1") == {
         "authorization": "Bearer highly-secret",
     }

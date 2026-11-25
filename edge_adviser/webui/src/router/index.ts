@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import type { RouteLocationGeneric, RouteRecordRaw } from 'vue-router'
 
 // Route table per the new IA (spec §4): 5 top-level pages + the asset detail
 // page. The old /reports /knowledge /assets /feedback /monitor /asset-hub
@@ -26,7 +27,7 @@ export const RAIL_NAV: Array<{
   { name: 'settings', label: '设置', icon: 'settings' },
 ]
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'overview',
@@ -72,6 +73,20 @@ const routes = [
     component: () => import('../views/Settings.vue'),
     meta: { title: '设置' },
   },
+  // ─── legacy deep-link redirects (0.4.x bookmarks) ──────────────────────────
+  // The IA collapsed 11 pages into 5 + asset tabs; old bookmarks must land on
+  // the nearest replacement instead of the near-blank NotFound panel.
+  { path: '/monitor', redirect: { name: 'asset' } },
+  { path: '/monitor/:assetId', redirect: (to: RouteLocationGeneric) =>
+      ({ name: 'asset-detail', params: { assetId: to.params.assetId } }) },
+  { path: '/asset-hub', redirect: { name: 'asset' } },
+  { path: '/asset-hub/:assetId', redirect: (to: RouteLocationGeneric) =>
+      ({ name: 'asset-detail', params: { assetId: to.params.assetId } }) },
+  { path: '/reports', redirect: { name: 'asset' } },
+  { path: '/knowledge', redirect: { name: 'asset' } },
+  { path: '/feedback', redirect: { name: 'asset' } },
+  { path: '/assets', redirect: { name: 'asset' } },
+  { path: '/runlog', redirect: { name: 'audit' } },
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',

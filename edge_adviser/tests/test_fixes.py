@@ -262,3 +262,78 @@ def test_task_stream_token_filter_and_unique_tokens(tmp_path: Path) -> None:
     assert r["ok"] is True
     token = r["data"].get("token")
     assert token and len(token) >= 16  # uuid4 hex, not the legacy kind string
+
+
+# --------------------------------------------------------------------------- #
+#  0.5.1: config loader honors retention fields
+# --------------------------------------------------------------------------- #
+def test_loader_reads_retention_fields(tmp_path: Path) -> None:
+    from edge_adviser.config.loader import load_config
+
+    cfg = {"workspace": str(tmp_path / "ws"),
+           "max_snapshots": 50, "max_runlog_rows": 500, "assets": []}
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(cfg), encoding="utf-8")
+    c = load_config(p)
+    assert c.max_snapshots == 50
+    assert c.max_runlog_rows == 500
+
+
+def test_loader_rejects_absurd_retention_values(tmp_path: Path) -> None:
+    from edge_adviser.config.loader import load_config
+
+    for field, bad in (("max_snapshots", 5), ("max_runlog_rows", 10)):
+        cfg = {"workspace": str(tmp_path / "ws"), "assets": [], field: bad}
+        p = tmp_path / f"config-{field}.json"
+        p.write_text(json.dumps(cfg), encoding="utf-8")
+        with pytest.raises(ValueError, match=field):
+            load_config(p)
+
+
+# --------------------------------------------------------------------------- #
+#  0.5.1: snapshot / MEMORY.md writes are atomic (tmp + os.replace)
+# --------------------------------------------------------------------------- #
+def test_snapshot_and_memory_writes_are_atomic(tmp_path: Path) -> None:
+    from edge_adviser.core.asset_store import AssetStore
+
+    store = AssetStore(tmp_path)
+    snap = {"window_end": "2026-11-25T00:00:00+00:00", "state": "healthy"}
+    p = store.save_snapshot("a1", snap)
+    assert json.loads(p.read_text(encoding="utf-8"))["state"] == "healthy"
+    # no tmp residue next to the snapshot
+    assert list(p.parent.glob("*.tmp")) == []
+
+    mp = store.write_memory_md("a1", "# knowledge v1")
+    assert mp.read_text(encoding="utf-8") == "# knowledge v1"
+    store.write_memory_md("a1", "# knowledge v2 — longer content over same path")
+    assert "v2" in mp.read_text(encoding="utf-8")
+    assert list(mp.parent.glob("*.tmp")) == []
+
+
+# --------------------------------------------------------------------------- #
+#  0.5.1: headless serve mode derives alerts (parity with the web loop)
+# --------------------------------------------------------------------------- #
+def test_serve_mode_ingests_alerts(tmp_path: Path) -> None:
+    import asyncio
+    from edge_adviser.core.asset_store import AssetStore
+    from edge_adviser.cli import _ServeAlertSink
+    from edge_adviser.server.alerts import ingest_alert
+
+    store = AssetStore(tmp_path)
+    sink = _ServeAlertSink(store)
+    now = datetime.now(timezone.utc)
+    # a critical snapshot must produce exactly one alert (dedup on subject)
+    snap = {"asset_id": "pump1", "status": "healthy", "overall_level": "critical",
+            "state_reason": "over crit band", "headline": "temp critical",
+            "window_end": now.isoformat(timespec="seconds")}
+    a1 = ingest_alert(sink, "pump1", snap)
+    assert a1 and a1["subject"] == "critical"
+    assert not ingest_alert(sink, "pump1", snap), "second critical run must dedup"
+    p = store.asset_dir("pump1") / "alerts.jsonl"
+    rows = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    assert len(rows) == 1
+    # planned downtime stays exempt, same as the HMI path
+    snap2 = {"asset_id": "pump1", "status": "planned_downtime", "overall_level": "info",
+             "state_reason": "", "headline": "", "window_end": now.isoformat(timespec="seconds")}
+    assert not ingest_alert(sink, "pump1", snap2)
+    assert len(rows) == 1

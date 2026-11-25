@@ -182,6 +182,19 @@ async def _cmd_feedback(c: _Context, asset_id: str, note: str) -> None:
     print(f"[feedback] recorded for {asset_id}")
 
 
+class _ServeAlertSink:
+    """Minimal duck-typed ``state`` for serve-mode alert derivation.
+
+    ``ingest_alert`` only touches ``state.store`` (alerts.jsonl ledger) — it
+    needs no bus, feedback service, or gateway, so headless serve mode can
+    share the exact same dedup/persist rules as the HMI without building an
+    AppState.
+    """
+
+    def __init__(self, store: AssetStore):
+        self.store = store
+
+
 async def _cmd_serve(c: _Context) -> None:
     sup = _supervisor(c)
     # monitor each asset every monitor_interval_s; deep-report/learn fire on
@@ -202,6 +215,19 @@ async def _cmd_serve(c: _Context) -> None:
                 if isinstance(snap, dict) and snap.get("error"):
                     print(f"[serve] {asset.asset_id}: run not OK — {snap.get('error')} "
                           f"(state={snap.get('status', snap.get('error'))})")
+                # 0.5.1: headless serve derives + persists alerts too — a Docker
+                # deployment without the HMI still needs the alerts.jsonl ledger
+                # (same dedup rule as the web loop) or a critical/offline asset
+                # would never raise an operator-visible alert.
+                if isinstance(snap, dict) and snap.get("asset_id"):
+                    try:
+                        from .server.alerts import ingest_alert
+                        alert = ingest_alert(_ServeAlertSink(c.store), asset.asset_id, snap)
+                        if alert:
+                            print(f"[serve] ALERT {asset.asset_id}: "
+                                  f"[{alert.get('subject')}] {alert.get('headline') or alert.get('reason')}")
+                    except Exception as exc:
+                        print(f"[serve] alert err {asset.asset_id}: {exc}")
                 await sup.run_due_jobs(asset, _dt.datetime.now(_dt.timezone.utc))
             await asyncio.sleep(c.config.monitor_interval_s)
     finally:

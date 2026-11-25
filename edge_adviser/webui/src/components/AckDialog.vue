@@ -22,6 +22,8 @@ const props = defineProps<{
   assets?: string[]
   /** bulk: fleet-wide sweep */
   fleet?: boolean
+  /** bulk: only acknowledge this subject (warn/critical/offline/stale) */
+  subject?: string
 }>()
 
 const emit = defineEmits<{ (e: 'close'): void; (e: 'confirmed'): void }>()
@@ -87,12 +89,14 @@ async function confirm(): Promise<void> {
       await rt.acknowledge(props.alert.asset_id, props.alert.ts, n)
       toast(n ? '已确认并记入反馈' : '已确认')
     } else if (props.fleet) {
-      const r = await ackAllFleet(n, null)
+      // honor the active severity filter — a fleet sweep must never silently
+      // widen beyond what the operator is looking at
+      const r = await ackAllFleet(n, props.subject || null)
       toast(`全场已确认 ${r?.acked ?? 0} 条${n ? '，备注已记入反馈' : ''}`)
     } else {
       let total = 0
       for (const id of props.assets || []) {
-        const r = await ackAllAsset(id, null, n)
+        const r = await ackAllAsset(id, props.subject || null, n)
         total += r?.acked ?? 0
       }
       toast(`已批量确认 ${total} 条${n ? '，备注已记入反馈' : ''}`)

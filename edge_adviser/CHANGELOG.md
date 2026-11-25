@@ -4,6 +4,26 @@
 
 ---
 
+## 0.5.1 — 2026-11-25（正确性回归修复 + 可交付性止血）
+
+HMI 重写与 0.5.0 快速推进后的第一轮系统性审查修复批次一（P0 正确性 + 关键可靠性）。测试 178 → **183**。
+
+### 正确性修复
+
+- **cron 星期映射修复**：`core/cron.py` 的 DOW 映射从 `0 if d==7 else d-1` 改为 `(d-1)%7`——此前 cron `0`（周日）映射到 -1 永不匹配、`7`（周日）映射到周一。配置 `"0 6 * * 0"` 的周日报告此前永远不触发。补周日 0/7 双写法回归测试。
+- **配置加载器尊重 retention 字段**：`max_snapshots`/`max_runlog_rows` 此前不在 loader 显式 kwargs 中,JSON 里配置的值被静默丢弃（数据类默认 2000/10000 恒生效,`/api/stats` 也把默认值当真实上限）。现在加载并做下限校验（<10 / <100 直接报错拒启）。
+- **批量确认恢复严重度过滤**：告警页批量确认（按资产/全场）此前丢弃当前 severity 筛选（`AckDialog` 传 `subject=null`）——筛选"断连"后全场确认会把 warning/critical 一起确认掉（重写回归）。现在 `fSeverity` 透传给后端,批量范围与操作员所见一致。
+- **Windows 凭据库测试**:chmod 0600 断言仅在 POSIX 下生效（Windows 上 mode 恒 0o666,chmod 是 no-op）。
+
+### 可靠性修复
+
+- **审计页跨资产竞态守卫**：`Audit.vue` load/loadMore 加请求序号守卫——慢的资产 A 响应此前会污染资产 B 的账本（0.4.3 防护在重写中丢失）。同类守卫补齐 `TabLive.vue`（历史快照回填覆盖更新的 SSE 点、报告/告警卡串资产）与 `AssetDetail.vue`（报告数徽章竞态）。
+- **快照与 MEMORY.md 原子写**:`save_snapshot`/`write_memory_md` 改为 tmp + os.replace——此前崩溃留下截断 JSON,门禁把半截最新快照当缺数据,学习沉淀可能丢失（`truncate_jsonl` 已是原子写,统一模式）。
+- **serve 模式派生告警**：无 HMI 部署（Docker compose 即此形态）此前零告警——`_cmd_serve` 循环现在通过轻量 `_ServeAlertSink` 走与 web 循环完全相同的 dedup/persist 规则,critical/offline 资产在 headless 部署也能产生 alerts.jsonl + 控制台告警行。
+- **旧路由兼容重定向**：`/monitor`、`/reports`、`/knowledge`、`/feedback`、`/runlog`、`/assets`、`/asset-hub` 书签不再落到近空白 NotFound,重定向到最近替代页（资产详情/审计）。`webui/dist` 重建为重写后 UI。
+
+---
+
 ## 0.5.0 — 2026-11-25（HMI 前端重写：深空天文台 UI）
 
 `webui/` 整体重写（Vue 3 + Vite + reka-ui headless + TanStack Table + ECharts,移除 element-plus）：11 页收敛为 5 顶级页 + 资产详情 tab（实时/历史/报告/知识/设置）。青色=确定性事实、紫色=AI 解读的双色语义贯穿;QA 三态（回答/门禁拒绝/模型故障）+ 快照溯源行;报告/学习统一任务流（done/failed/timeout 三态复位）;阈值行内编辑即改即生效（PATCH 后引用替换,实时曲线色带重绘）;告警确认备注自动入学习反馈;审计页修复旧 bug C（按 kind 而非 outcome 筛选,"确认"可达）。PIN 使用界面内对话框，输入错误可重试、取消后可从连接状态恢复。导航始终显示全部六个入口，不再提供无业务权限含义的角色视图切换；QA 抽屉关闭后正确卸载，可再次打开。移动端告警列表改为卡片式布局并修正时间、时长显示；设备类型和主要页面标题统一为中文。后端配套修复：/report、/learn 与后台任务共享 token,SSE 任务流终态可达。demo 模式（`web config.demo.json`)离线跑通全部界面。

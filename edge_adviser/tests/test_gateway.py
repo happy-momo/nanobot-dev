@@ -229,6 +229,33 @@ def test_cron_matches_basic_and_ranges() -> None:
     assert cron_matches("30 2 1,15 * *", datetime(2026, 11, 15, 2, 30))
 
 
+def test_cron_sunday_mapping() -> None:
+    """Regression (0.5.1): cron 0 and 7 both mean Sunday (Vixie convention).
+
+    The old mapping (`0 if d == 7 else d - 1`) sent cron 0 to -1 (never
+    matches) and cron 7 to Monday. `0 6 * * 0` must fire on Sunday; `* * * * 7`
+    must be identical to `* * * * 0`.
+    """
+    from datetime import datetime
+    from edge_adviser.core.cron import cron_matches
+
+    sunday = datetime(2026, 11, 15, 6, 0)   # a Sunday
+    monday = datetime(2026, 11, 16, 6, 0)
+    saturday = datetime(2026, 11, 14, 6, 0)
+    # both spellings of Sunday fire on Sunday, not Monday/Saturday
+    assert cron_matches("0 6 * * 0", sunday)
+    assert cron_matches("0 6 * * 7", sunday)
+    assert not cron_matches("0 6 * * 0", monday)
+    assert not cron_matches("0 6 * * 7", monday)
+    assert not cron_matches("0 6 * * 0", saturday)
+    # Mon..Sat range must include neither spelling of Sunday
+    assert cron_matches("0 6 * * 1-6", saturday)
+    assert not cron_matches("0 6 * * 1-6", sunday)
+    # names-as-numbers consistency: 0=7=Sunday are the only matches on Sunday
+    assert cron_matches("* * * * 0,3,7", sunday)
+    assert cron_matches("* * * * 0,3,7", datetime(2026, 11, 18, 6, 0))  # Wednesday=3
+
+
 def test_cron_matches_rejects_malformed() -> None:
     from datetime import datetime
     from edge_adviser.core.cron import cron_matches

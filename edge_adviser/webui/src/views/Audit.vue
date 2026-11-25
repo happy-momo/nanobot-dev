@@ -102,39 +102,51 @@ const okRate = computed<number | null>(() => {
 })
 
 // ------------------------------------------------------------------ loads --
+// sequence guard: a slow response for asset A must never land in asset B's
+// ledger (watch(assetId) can fire while a previous request is in flight)
+let loadSeq = 0
 async function load(): Promise<void> {
-  if (!assetId.value) return
+  const mySeq = ++loadSeq
+  const asset = assetId.value
+  if (!asset) return
   loading.value = true
   loadError.value = ''
   rows.value = []
   nextBefore.value = null
   total.value = null
   try {
-    const d = await fetchRunlog(assetId.value, undefined, 300)
+    const d = await fetchRunlog(asset, undefined, 300)
+    if (mySeq !== loadSeq || asset !== assetId.value) return
     rows.value = (d?.rows || []) as RunlogRow[]
     nextBefore.value = d?.next_before ?? null
     total.value = typeof d?.total === 'number' ? d.total : null
   } catch (e) {
+    if (mySeq !== loadSeq) return
     // failed READ ≠ empty ledger: "no rows" and "can't read rows" mean
     // opposite things to an auditor (carried over from the old Runlog.vue)
     loadError.value = e instanceof Error ? e.message : '审计记录加载失败'
   } finally {
-    loading.value = false
+    if (mySeq === loadSeq) loading.value = false
   }
 }
 
 async function loadMore(): Promise<void> {
-  if (!assetId.value || !nextBefore.value || loadingMore.value) return
+  const mySeq = loadSeq
+  const asset = assetId.value
+  if (!asset || !nextBefore.value || loadingMore.value) return
   loadingMore.value = true
   try {
-    const d = await fetchRunlog(assetId.value, Number(nextBefore.value), 300)
+    const d = await fetchRunlog(asset, Number(nextBefore.value), 300)
+    if (mySeq !== loadSeq || asset !== assetId.value) return
     const older = (d?.rows || []) as RunlogRow[]
     rows.value = rows.value.concat(older)
     nextBefore.value = d?.next_before ?? null
   } catch (e) {
-    toast(e instanceof Error ? `加载更早记录失败：${e.message}` : '加载更早记录失败', 'crit')
+    if (mySeq === loadSeq) {
+      toast(e instanceof Error ? `加载更早记录失败：${e.message}` : '加载更早记录失败', 'crit')
+    }
   } finally {
-    loadingMore.value = false
+    if (mySeq === loadSeq) loadingMore.value = false
   }
 }
 

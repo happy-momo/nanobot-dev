@@ -342,6 +342,7 @@ function closeDialog(): void {
       :alert="ackTarget"
       :assets="bulkAssets"
       :fleet="bulkFleet"
+      :subject="fSeverity || undefined"
       @close="closeDialog"
     />
   </div>

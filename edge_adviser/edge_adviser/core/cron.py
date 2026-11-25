@@ -51,11 +51,12 @@ def cron_matches(expr: str, now: datetime) -> bool:
     hour = _parse_field(fields[1], 0, 23)
     dom = _parse_field(fields[2], 1, 31)
     month = _parse_field(fields[3], 1, 12)
-    # 0=Sunday (Vixie cron), Python's weekday() is 0=Monday
+    # 0=Sunday (Vixie cron), Python's weekday() is 0=Monday.
+    # (d-1)%7: cron 0(Sun)->6, 1(Mon)->0, ..., 6(Sat)->5, 7(Sun)->6.
     dow_raw = _parse_field(fields[4], 0, 7)
     dow = None
     if dow_raw is not None:
-        dow = {0 if d == 7 else d - 1 for d in dow_raw}
+        dow = {(d - 1) % 7 for d in dow_raw}
 
     if minute is not None and now.minute not in minute:
         return False
