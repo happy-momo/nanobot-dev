@@ -112,6 +112,11 @@ export interface ConnectorTestResult {
   sample_preview: Array<Record<string, unknown>>
 }
 
+export type ConnectorCredentialsInput =
+  | { headers: Record<string, string> }
+  | { username: string; password: string; private_key_password?: string }
+  | { private_key_password: string }
+
 /** Scheduler liveness (status ok|degraded + heartbeat age + per-asset data). */
 export const fetchHealth = () => api.get<any>('/api/health')
 
@@ -134,9 +139,9 @@ export const downloadAssetBackup = (id: string) =>
     `/api/assets/${encodeURIComponent(id)}/backup.json`,
     `${id}-backup.json`,
   )
-export const putConnectorCredentials = (id: string, headers: Record<string, string>) =>
+export const putConnectorCredentials = (id: string, credentials: ConnectorCredentialsInput) =>
   api.put<{ credential_id: string; configured: boolean }>(
-    `/api/connector-credentials/${encodeURIComponent(id)}`, { headers })
+    `/api/connector-credentials/${encodeURIComponent(id)}`, credentials)
 export const deleteConnectorCredentials = (id: string) =>
   api.delete<{ deleted: boolean }>(`/api/connector-credentials/${encodeURIComponent(id)}`)
 export const testConnector = (config: AssetConfigurationInput) =>

@@ -71,7 +71,10 @@ class AssetInput(BaseModel):
 
 
 class CredentialInput(BaseModel):
-    headers: dict[str, str]
+    headers: dict[str, str] = Field(default_factory=dict)
+    username: str | None = None
+    password: str | None = None
+    private_key_password: str | None = None
 
 
 class TestConnectorInput(BaseModel):
@@ -190,7 +193,10 @@ def _validate_asset(body: AssetInput) -> tuple[AssetSpec, SourceSpec]:
             raise ValueError(f"指标 {metric.key} 的严重区间与警告区间重叠")
 
     source = body.source
-    if source.kind not in (SourceKind.SIMULATOR, SourceKind.REST):
+    if source.kind not in (
+        SourceKind.SIMULATOR, SourceKind.REST, SourceKind.MQTT,
+        SourceKind.OPCUA, SourceKind.MODBUS,
+    ):
         raise ValueError(f"{source.kind.value} 尚未接入，当前不能启用")
     if source.credential_id and not _ASSET_ID.fullmatch(source.credential_id):
         raise ValueError("凭据标识格式无效")
@@ -243,6 +249,127 @@ def _validate_asset(body: AssetInput) -> tuple[AssetSpec, SourceSpec]:
         if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) \
                 or not math.isfinite(timeout_s) or not 1 <= timeout_s <= 30:
             raise ValueError("连接超时须在 1 到 30 秒之间")
+    elif source.kind == SourceKind.MQTT:
+        parsed = urlparse(source.url)
+        if len(source.url) > 2048 or parsed.scheme not in ("mqtt", "mqtts") or not parsed.hostname:
+            raise ValueError("MQTT 地址必须是有效的 mqtt:// 或 mqtts:// URL")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("MQTT 地址端口无效") from exc
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError("MQTT 地址端口无效")
+        if parsed.username or parsed.password or parsed.path not in ("", "/") \
+                or parsed.query or parsed.fragment:
+            raise ValueError("MQTT 地址不能包含凭据、路径、查询参数或片段")
+        topic = source.topic.strip()
+        if not topic or len(topic.encode("utf-8")) > 65535 or "\x00" in topic:
+            raise ValueError("MQTT topic 必须是有效的非空主题过滤器")
+        levels = topic.split("/")
+        if any(("#" in level and level != "#") or ("+" in level and level != "+")
+               for level in levels) or any(
+                   level == "#" for level in levels[:-1]
+               ):
+            raise ValueError("MQTT topic 中的 + 和 # 必须作为独立主题级别使用，# 只能位于末尾")
+        if source.poll_interval_s <= 0 or not math.isfinite(source.poll_interval_s):
+            raise ValueError("采集间隔必须是大于 0 的有限数值")
+        allowed_params = {
+            "timeout_s", "qos", "timestamp_field", "response_path", "field_map",
+        }
+        unknown_params = set(source.params) - allowed_params
+        if unknown_params:
+            raise ValueError(f"MQTT 配置包含不支持的参数：{', '.join(sorted(unknown_params))}")
+        timeout_s = source.params.get("timeout_s", 10)
+        if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) \
+                or not math.isfinite(timeout_s) or not 1 <= timeout_s <= 30:
+            raise ValueError("连接超时须在 1 到 30 秒之间")
+        qos = source.params.get("qos", 0)
+        if isinstance(qos, bool) or not isinstance(qos, int) or qos not in (0, 1, 2):
+            raise ValueError("MQTT QoS 必须是 0、1 或 2")
+        timestamp_field = source.params.get("timestamp_field", "ts")
+        response_path = source.params.get("response_path", "")
+        if not isinstance(timestamp_field, str) or not timestamp_field.strip() \
+                or not isinstance(response_path, str):
+            raise ValueError("MQTT 时间戳字段和响应路径无效")
+        if any(not part for part in timestamp_field.split(".")) \
+                or (response_path and any(not part for part in response_path.split("."))):
+            raise ValueError("MQTT 时间戳字段和响应路径不能包含空路径段")
+        field_map = source.params.get("field_map", {})
+        if not isinstance(field_map, dict):
+            raise ValueError("MQTT 指标字段映射必须是对象")
+        unknown_metrics = set(field_map) - keys
+        if unknown_metrics:
+            raise ValueError(f"MQTT 字段映射引用了未配置指标：{', '.join(sorted(unknown_metrics))}")
+        if any(not isinstance(value, str) or not value.strip() for value in field_map.values()):
+            raise ValueError("MQTT 来源字段名不能为空")
+        if any(any(not part for part in value.split(".")) for value in field_map.values()):
+            raise ValueError("MQTT 来源字段路径不能包含空路径段")
+        if source.credential_id and not _ASSET_ID.fullmatch(source.credential_id):
+            raise ValueError("凭据标识格式无效")
+    elif source.kind == SourceKind.OPCUA:
+        parsed = urlparse(source.url)
+        if len(source.url) > 2048 or parsed.scheme != "opc.tcp" or not parsed.hostname:
+            raise ValueError("OPC UA 地址必须是有效的 opc.tcp:// URL")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("OPC UA 地址端口无效") from exc
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError("OPC UA 地址端口无效")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("OPC UA 地址不能包含凭据、查询参数或片段")
+        if parsed.hostname.lower() == "metadata.google.internal":
+            raise ValueError("OPC UA 地址不允许指向云元数据服务")
+        try:
+            address = ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            address = None
+        if address and (
+            address.is_link_local or address.is_unspecified or address.is_multicast
+        ):
+            raise ValueError("OPC UA 地址不允许使用链路本地、未指定或组播地址")
+        if source.poll_interval_s < 0.1 or source.poll_interval_s > 3600 \
+                or not math.isfinite(source.poll_interval_s):
+            raise ValueError("OPC UA 采集间隔须在 0.1 到 3600 秒之间")
+        allowed_params = {
+            "timeout_s", "node_map", "security_mode", "client_certificate",
+            "client_private_key", "server_certificate",
+        }
+        unknown_params = set(source.params) - allowed_params
+        if unknown_params:
+            raise ValueError(f"OPC UA 配置包含不支持的参数：{', '.join(sorted(unknown_params))}")
+        timeout_s = source.params.get("timeout_s", 10)
+        if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) \
+                or not math.isfinite(timeout_s) or not 1 <= timeout_s <= 30:
+            raise ValueError("OPC UA 连接超时须在 1 到 30 秒之间")
+        node_map = source.params.get("node_map")
+        if not isinstance(node_map, dict) or set(node_map) != keys:
+            raise ValueError("OPC UA 节点映射必须为每个已配置指标各指定一个 NodeId")
+        if any(not isinstance(node_id, str) or not node_id.strip() for node_id in node_map.values()):
+            raise ValueError("OPC UA NodeId 不能为空")
+        security_mode = source.params.get("security_mode", "none")
+        if not isinstance(security_mode, str) \
+                or security_mode not in {"none", "sign", "sign_and_encrypt"}:
+            raise ValueError("OPC UA 安全模式无效")
+        certificate_fields = (
+            source.params.get("client_certificate", ""),
+            source.params.get("client_private_key", ""),
+            source.params.get("server_certificate", ""),
+        )
+        if security_mode == "none" and any(certificate_fields):
+            raise ValueError("OPC UA 无安全模式不能配置证书路径")
+        if security_mode != "none" and not all(
+            isinstance(path, str) and path.strip() for path in certificate_fields
+        ):
+            raise ValueError("OPC UA 安全连接需要客户端证书、私钥和可信服务器证书")
+        if source.credential_id and not _ASSET_ID.fullmatch(source.credential_id):
+            raise ValueError("凭据标识格式无效")
+    elif source.kind == SourceKind.MODBUS:
+        if source.credential_id:
+            raise ValueError("Modbus TCP 不支持连接凭据")
+        register_map = source.params.get("register_map")
+        if not isinstance(register_map, dict) or set(register_map) != keys:
+            raise ValueError("Modbus 寄存器映射必须为每个已配置指标各指定一项")
     else:
         allowed_params = {"regime", "sample_freq_s"}
         unknown_params = set(source.params) - allowed_params
@@ -311,7 +438,7 @@ async def configuration(request: Request) -> Any:
         "credential_store_available": state.credential_vault.available,
         "protocols": {
             "simulator": "ready", "rest": "ready",
-            "mqtt": "planned", "opcua": "planned", "modbus": "planned",
+            "mqtt": "ready", "opcua": "ready", "modbus": "ready",
         },
     })
 
@@ -321,16 +448,42 @@ async def put_credentials(request: Request, credential_id: str, body: Credential
     state = await _state(request)
     if not _ASSET_ID.fullmatch(credential_id):
         return fail("凭据标识格式无效", status=400)
-    if not body.headers:
-        return fail("至少填写一个认证请求头", status=400)
     cleaned: dict[str, str] = {}
-    for name, value in body.headers.items():
-        key = name.lower().strip()
-        if key not in _ALLOWED_HEADERS:
-            return fail(f"不支持的认证请求头：{name}", status=400)
-        if not value or len(value) > 4096 or "\r" in value or "\n" in value:
-            return fail("认证值不能为空、不能换行且长度不能超过 4096 字符", status=400)
-        cleaned[key] = value
+    if body.headers and (
+        body.username is not None or body.password is not None
+        or body.private_key_password is not None
+    ):
+        return fail("REST 请求头与协议用户名密码不能同时提交", status=400)
+    if body.headers:
+        for name, value in body.headers.items():
+            key = name.lower().strip()
+            if key not in _ALLOWED_HEADERS:
+                return fail(f"不支持的认证请求头：{name}", status=400)
+            if not value or len(value) > 4096 or "\r" in value or "\n" in value:
+                return fail("认证值不能为空、不能换行且长度不能超过 4096 字符", status=400)
+            cleaned[key] = value
+    elif body.username is not None or body.password is not None \
+            or body.private_key_password is not None:
+        if (body.username is None) != (body.password is None):
+            return fail("MQTT/OPC UA 用户名和密码必须同时填写", status=400)
+        if body.username is not None and (not body.username or not body.password):
+            return fail("用户名和密码不能为空", status=400)
+        if body.private_key_password is not None and not body.private_key_password:
+            return fail("私钥密码不能为空", status=400)
+        values = [
+            value for value in (body.username, body.password, body.private_key_password)
+            if value is not None
+        ]
+        if not values:
+            return fail("至少填写一项协议凭据", status=400)
+        if any(len(value) > 4096 or "\r" in value or "\n" in value for value in values):
+            return fail("认证值不能换行且长度不能超过 4096 字符", status=400)
+        if body.username is not None and body.password is not None:
+            cleaned = {"username": body.username, "password": body.password}
+        if body.private_key_password is not None:
+            cleaned["private_key_password"] = body.private_key_password
+    else:
+        return fail("请填写 REST 认证请求头、MQTT/OPC UA 用户名密码或私钥密码", status=400)
     async with state.configuration_lock:
         if any(source.credential_id == credential_id for source in state.config.sources):
             return fail("已绑定凭据不可直接覆盖，请创建新凭据并更新设备配置", status=409)
@@ -361,7 +514,10 @@ async def test_connector(request: Request, body: TestConnectorInput) -> Any:
     state = await _state(request)
     if body.window_s < 5 or body.window_s > 300:
         return fail("测试窗口须在 5 到 300 秒之间", status=400)
-    if body.source.kind not in (SourceKind.SIMULATOR, SourceKind.REST):
+    if body.source.kind not in (
+        SourceKind.SIMULATOR, SourceKind.REST, SourceKind.MQTT,
+        SourceKind.OPCUA, SourceKind.MODBUS,
+    ):
         return fail("该通信协议尚未接入", status=400)
     try:
         test_asset = AssetInput(
@@ -383,25 +539,85 @@ async def test_connector(request: Request, body: TestConnectorInput) -> Any:
     metric_sample_counts = {metric.key: 0 for metric in asset.metrics}
     now = datetime.now(timezone.utc)
     try:
-        for index in range(3):
-            end = now - timedelta(seconds=body.window_s * (2 - index))
-            start = end - timedelta(seconds=body.window_s)
-            try:
-                samples = await asyncio.wait_for(
-                    src.pull(start, end),
-                    timeout=min(float(spec.params.get("timeout_s", 10)), 30),
-                )
-            except asyncio.TimeoutError:
-                issues.append(f"第 {index + 1} 次采集超时")
-                checks.append({"run": index + 1, "ok": False, "error": "请求超时"})
-                continue
-            except Exception as exc:
-                issues.append(f"第 {index + 1} 次采集失败")
-                checks.append({
-                    "run": index + 1, "ok": False,
-                    "error": f"连接器返回 {type(exc).__name__}",
-                })
-                continue
+        realtime_source = spec.kind in (
+            SourceKind.MQTT, SourceKind.OPCUA, SourceKind.MODBUS,
+        )
+        run_count = 1 if realtime_source else 3
+        realtime_deadline = asyncio.get_running_loop().time() + min(
+            max(asset.sample_freq_s * 2, 3), 30,
+        )
+        for index in range(run_count):
+            if realtime_source:
+                samples = []
+                while not samples:
+                    end = datetime.now(timezone.utc) + timedelta(seconds=1)
+                    start = end - timedelta(seconds=body.window_s)
+                    try:
+                        samples = await asyncio.wait_for(
+                            src.pull(start, end),
+                            timeout=min(float(spec.params.get("timeout_s", 10)), 30),
+                        )
+                    except asyncio.TimeoutError:
+                        issues.append("等待实时数据超时")
+                        checks.append({"run": index + 1, "ok": False, "error": "等待消息超时"})
+                        break
+                    except Exception as exc:
+                        issues.append(
+                            "MQTT 消息接收失败" if spec.kind == SourceKind.MQTT
+                            else (
+                                "OPC UA 节点读取失败" if spec.kind == SourceKind.OPCUA
+                                else "Modbus 寄存器读取失败"
+                            )
+                        )
+                        checks.append({
+                            "run": index + 1, "ok": False,
+                            "error": f"连接器返回 {type(exc).__name__}",
+                        })
+                        break
+                    if samples or asyncio.get_running_loop().time() >= realtime_deadline:
+                        break
+                    await asyncio.sleep(0.2)
+                if not samples:
+                    if not checks or checks[-1]["run"] != index + 1:
+                        issues.append(
+                            "测试期间未收到 MQTT 消息" if spec.kind == SourceKind.MQTT
+                            else (
+                                "测试期间未读取到 OPC UA 数据"
+                                if spec.kind == SourceKind.OPCUA
+                                else "测试期间未读取到 Modbus 数据"
+                            )
+                        )
+                        checks.append({
+                            "run": index + 1, "ok": False,
+                            "error": (
+                                "测试期间未收到消息" if spec.kind == SourceKind.MQTT
+                                else (
+                                    "测试期间未读取到 OPC UA 数据"
+                                    if spec.kind == SourceKind.OPCUA
+                                    else "测试期间未读取到 Modbus 数据"
+                                )
+                            ),
+                        })
+                    continue
+            else:
+                end = now - timedelta(seconds=body.window_s * (2 - index))
+                start = end - timedelta(seconds=body.window_s)
+                try:
+                    samples = await asyncio.wait_for(
+                        src.pull(start, end),
+                        timeout=min(float(spec.params.get("timeout_s", 10)), 30),
+                    )
+                except asyncio.TimeoutError:
+                    issues.append(f"第 {index + 1} 次采集超时")
+                    checks.append({"run": index + 1, "ok": False, "error": "请求超时"})
+                    continue
+                except Exception as exc:
+                    issues.append(f"第 {index + 1} 次采集失败")
+                    checks.append({
+                        "run": index + 1, "ok": False,
+                        "error": f"连接器返回 {type(exc).__name__}",
+                    })
+                    continue
             total_samples += len(samples)
             preview_samples = [
                 {key: row[key] for key in ("ts", *metric_sample_counts) if key in row}
@@ -410,7 +626,10 @@ async def test_connector(request: Request, body: TestConnectorInput) -> Any:
             run_issues: list[str] = []
             parsed_times: list[datetime] = []
             metric_counts = {metric.key: 0 for metric in asset.metrics}
-            expected_samples = max(1, math.ceil(body.window_s / asset.sample_freq_s))
+            expected_samples = (
+                1 if realtime_source
+                else max(1, math.ceil(body.window_s / asset.sample_freq_s))
+            )
             sample_coverage = len(samples) / expected_samples
             if sample_coverage < state.config.coverage_threshold:
                 run_issues.append(
@@ -473,6 +692,7 @@ async def test_connector(request: Request, body: TestConnectorInput) -> Any:
     finally:
         await src.aclose()
 
+    now = datetime.now(timezone.utc)
     if latest_timestamp is not None:
         age_s = (now - latest_timestamp).total_seconds()
         if age_s > state.config.data_freshness_s:

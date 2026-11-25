@@ -1,5 +1,8 @@
+from ..config.model import SourceKind
 from .base import DataSource, AsyncDataSource, Sample
-from .factory import MqttSource, ModbusSource, OpcUaSource
+from .modbus import ModbusSource
+from .mqtt import MqttSource
+from .opcua import OpcUaSource
 from .rest import RestSource
 from .simulator import SimulatorSource
 from dataclasses import replace
@@ -7,19 +10,16 @@ from dataclasses import replace
 _source_classes = {
     SimulatorSource.kind: SimulatorSource,
     RestSource.kind: RestSource,
-    MqttSource.kind: MqttSource,      # raises until wired
-    OpcUaSource.kind: OpcUaSource,    # raises until wired
-    ModbusSource.kind: ModbusSource,  # raises until wired
+    MqttSource.kind: MqttSource,
+    OpcUaSource.kind: OpcUaSource,
+    ModbusSource.kind: ModbusSource,
 }
 
 
 def create_source(spec, credentials: dict[str, str] | None = None) -> DataSource:
     """Build a data source from a SourceSpec.
 
-    Unknown kinds raise ValueError; unwired protocol skeletons raise
-    NotImplementedError (directly or via the ABC TypeError when ``pull`` is
-    unimplemented) — both are "configured but not available" and must be loud
-    at startup, never a silent no-op source.
+    Unknown kinds and invalid connector configurations fail loudly.
     """
     try:
         cls = _source_classes[spec.kind.value]
@@ -27,6 +27,10 @@ def create_source(spec, credentials: dict[str, str] | None = None) -> DataSource
         raise ValueError(f"unknown source kind: {spec.kind}") from None
     try:
         resolved = replace(spec, credentials=credentials) if credentials is not None else spec
+        if resolved.kind == SourceKind.REST and set(resolved.credentials) - {
+            "authorization", "x-api-key",
+        }:
+            raise ValueError("非 REST 请求头凭据不能用于 REST 连接器")
         return cls(resolved)
     except TypeError as exc:
         if "abstract" in str(exc):

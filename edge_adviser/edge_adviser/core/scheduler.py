@@ -71,10 +71,7 @@ class Supervisor:
                 try:
                     self._sources[spec.asset_id] = self.prepare_source(spec)
                 except NotImplementedError as exc:
-                    # a configured-but-unwired source (mqtt/opcua/modbus
-                    # skeletons) must be visible in the audit trail, not just
-                    # the log — otherwise "asset configured, never collected"
-                    # is discoverable only by noticing the empty dashboards
+                    # Keep configured-but-unavailable sources visible in the audit trail.
                     logger.warning("source not available for {a}: {e}", a=spec.asset_id, e=exc)
                     log_run_event(self.store, spec.asset_id, "serve_start", "no_data",
                                   reason=f"source_unwired: {spec.kind.value}",

@@ -241,14 +241,232 @@ def test_connector_test_checks_samples_and_redacts_unmapped_fields(
     assert any("覆盖率不足" in issue for issue in sparse["issues"])
 
 
-def test_unimplemented_protocol_is_rejected_without_persisting(
+def test_mqtt_configuration_and_backend_credentials(
     tmp_path: Path, monkeypatch,
 ) -> None:
     monkeypatch.setenv("EDGE_ADVISER_CREDENTIAL_KEY", Fernet.generate_key().decode("ascii"))
     client, headers, config_path = _client(tmp_path)
+    response = client.put(
+        "/api/connector-credentials/mqtt-cred",
+        json={"username": "operator", "password": "private-password"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert client.put(
+        "/api/connector-credentials/incomplete-mqtt-cred",
+        json={"username": "operator"},
+        headers=headers,
+    ).status_code == 400
+
+    payload = _rest_asset(credential_id="mqtt-cred")
+    payload["source"].update({
+        "kind": "mqtt",
+        "url": "mqtts://broker.example:8883",
+        "topic": "plant/pump-1",
+        "params": {
+            "timeout_s": 5,
+            "qos": 1,
+            "timestamp_field": "time",
+            "response_path": "data",
+            "field_map": {"temp": "temperature"},
+        },
+    })
+    created = client.post("/api/assets", json=payload, headers=headers)
+    assert created.status_code == 200, created.text
+
+    data = client.get("/api/configuration", headers=headers).json()["data"]
+    assert data["protocols"]["mqtt"] == "ready"
+    assert data["assets"][0]["credential_configured"] is True
+    assert "private-password" not in json.dumps(data)
+    assert client.app.state.edge.credential_vault.get("mqtt-cred") == {
+        "username": "operator",
+        "password": "private-password",
+    }
+
+    invalid = dict(payload)
+    invalid["source"] = {**payload["source"], "params": {"qos": 3}}
+    assert client.post("/api/assets", json=invalid, headers=headers).status_code == 400
+    assert json.loads(config_path.read_text(encoding="utf-8"))["assets"]
+
+
+def test_mqtt_connection_test_waits_for_a_live_sample(tmp_path: Path, monkeypatch) -> None:
+    client, headers, _ = _client(tmp_path)
+    from edge_adviser.server import router_configuration
+
+    calls: list[tuple[datetime, datetime]] = []
+
+    class LiveSource:
+        async def pull(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
+            calls.append((start, end))
+            timestamp = datetime.now(timezone.utc)
+            return [{"ts": timestamp.isoformat(), "temp": 63.2}]
+
+        async def aclose(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        router_configuration, "create_source", lambda *_args, **_kwargs: LiveSource(),
+    )
     payload = _rest_asset(credential_id="")
-    payload["source"]["kind"] = "mqtt"
-    payload["source"]["url"] = ""
-    response = client.post("/api/assets", json=payload, headers=headers)
-    assert response.status_code == 400
-    assert json.loads(config_path.read_text(encoding="utf-8"))["assets"] == []
+    payload["window_s"] = 5
+    payload["source"].update({
+        "kind": "mqtt",
+        "url": "mqtt://broker.example:1883",
+        "topic": "plant/pump-1",
+        "params": {"timeout_s": 2, "qos": 0},
+    })
+    response = client.post("/api/connectors/test", json=payload, headers=headers)
+    assert response.status_code == 200, response.text
+    result = response.json()["data"]
+    assert result["ok"] is True
+    assert len(result["runs"]) == 1
+    assert result["total_samples"] == 1
+    assert len(calls) == 1
+    start, end = calls[0]
+    assert start < datetime.now(timezone.utc) < end
+
+
+def test_modbus_configuration_and_live_connection_test(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    client, headers, config_path = _client(tmp_path)
+    payload = _rest_asset(credential_id="")
+    payload["source"].update({
+        "kind": "modbus",
+        "url": "modbus://192.168.10.20:502",
+        "params": {
+            "timeout_s": 5,
+            "unit_id": 1,
+            "register_map": {
+                "temp": {
+                    "area": "holding_registers",
+                    "address": 0,
+                    "type": "uint16",
+                },
+            },
+        },
+    })
+    created = client.post("/api/assets", json=payload, headers=headers)
+    assert created.status_code == 200, created.text
+    data = client.get("/api/configuration", headers=headers).json()["data"]
+    assert data["protocols"]["modbus"] == "ready"
+
+    calls: list[tuple[datetime, datetime]] = []
+
+    class LiveSource:
+        async def pull(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
+            calls.append((start, end))
+            return [{
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "temp": 63.2,
+            }]
+
+        async def aclose(self) -> None:
+            pass
+
+    from edge_adviser.server import router_configuration
+    monkeypatch.setattr(
+        router_configuration, "create_source", lambda *_args, **_kwargs: LiveSource(),
+    )
+    tested = client.post("/api/connectors/test", json=payload, headers=headers)
+    assert tested.status_code == 200, tested.text
+    result = tested.json()["data"]
+    assert result["ok"] is True
+    assert result["runs"][0]["ok"] is True
+    assert result["total_samples"] == 1
+    assert len(calls) == 1
+    start, end = calls[0]
+    assert start < datetime.now(timezone.utc) < end
+
+    invalid = {
+        **payload,
+        "asset_id": "pump2",
+        "source": {
+            **payload["source"],
+            "params": {
+                **payload["source"]["params"],
+                "register_map": {
+                    "temp": {
+                        "area": "holding_registers",
+                        "address": 65535,
+                        "type": "float32",
+                    },
+                },
+            },
+        },
+    }
+    rejected = client.post("/api/assets", json=invalid, headers=headers)
+    assert rejected.status_code == 400
+    assert len(json.loads(config_path.read_text(encoding="utf-8"))["assets"]) == 1
+
+
+def test_opcua_configuration_and_live_connection_test(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setenv("EDGE_ADVISER_CREDENTIAL_KEY", Fernet.generate_key().decode("ascii"))
+    client, headers, _ = _client(tmp_path)
+    from edge_adviser.server import router_configuration
+    credentials = {
+        "username": "opc-operator",
+        "password": "opc-password",
+        "private_key_password": "private-key-password",
+    }
+    saved_credentials = client.put(
+        "/api/connector-credentials/opcua-cred",
+        json=credentials,
+        headers=headers,
+    )
+    assert saved_credentials.status_code == 200, saved_credentials.text
+    assert all(value not in saved_credentials.text for value in credentials.values())
+    assert client.app.state.edge.credential_vault.get("opcua-cred") == credentials
+
+    payload = _rest_asset(credential_id="")
+    payload["source"].update({
+        "kind": "opcua",
+        "url": "opc.tcp://192.168.10.20:4840/UA/Server",
+        "poll_interval_s": 1,
+        "params": {
+            "timeout_s": 5,
+            "security_mode": "none",
+            "node_map": {"temp": "ns=2;s=Pump.Temperature"},
+        },
+    })
+    created = client.post("/api/assets", json=payload, headers=headers)
+    assert created.status_code == 200, created.text
+    data = client.get("/api/configuration", headers=headers).json()["data"]
+    assert data["protocols"]["opcua"] == "ready"
+
+    calls: list[tuple[datetime, datetime]] = []
+
+    class LiveSource:
+        async def pull(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
+            calls.append((start, end))
+            return [{
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "temp": 63.2,
+            }]
+
+        async def aclose(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        router_configuration, "create_source", lambda *_args, **_kwargs: LiveSource(),
+    )
+    test_response = client.post(
+        "/api/connectors/test", json=payload, headers=headers,
+    )
+    assert test_response.status_code == 200, test_response.text
+    result = test_response.json()["data"]
+    assert result["ok"] is True
+    assert len(result["runs"]) == 1
+    assert result["total_samples"] == 1
+    assert len(calls) == 1
+
+    invalid = {
+        **payload,
+        "source": {
+            **payload["source"],
+            "params": {"node_map": {"unexpected": "ns=2;s=Pump.Temperature"}},
+        },
+    }
+    assert client.post("/api/assets", json=invalid, headers=headers).status_code == 400

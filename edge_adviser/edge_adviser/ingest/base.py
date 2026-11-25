@@ -1,9 +1,8 @@
 """Data source abstraction.
 
-A DataSource yields a batch of samples for one asset. Each sample is a dict of
-metric key -> numeric value attached to a timestamp. The simulator is the MVP
-source; MQTT/OPC-UA/Modbus/REST are structured skeletons that lift the same
-interface so the rest of the pipeline is transport-agnostic.
+A DataSource yields a batch of samples for one asset. Each sample is a dict of metric key -> numeric value attached to a timestamp.
+The simulator, REST, MQTT, OPC UA and Modbus TCP adapters implement this contract
+so the rest of the pipeline is transport-agnostic.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ class DataSource(abc.ABC):
 
 
 class AsyncDataSource(abc.ABC):
-    """Alternative interface for streaming sources (MQTT) — reserved."""
+    """Alternative streaming interface reserved for future adapters."""
 
     kind: str = "async"
 

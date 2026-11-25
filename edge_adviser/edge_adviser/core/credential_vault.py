@@ -12,7 +12,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 
 class CredentialVault:
-    """Persist connector headers encrypted with a deployment-provided key."""
+    """Persist connector credentials encrypted with a deployment-provided key."""
 
     def __init__(self, path: Path, key: str | None = None):
         self.path = path

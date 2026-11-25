@@ -125,7 +125,7 @@ PYTHONPATH=$PWD/edge_adviser python -m edge_adviser.cli web config.sample.json
 
 **访问控制**：`hmi_pin`（`config` 顶部）为 `"none"` 时局域网开放；设为字符串则启用共享 PIN，浏览器先 `POST /api/auth/pin` 换短期 HMAC token。
 
-**设备与连接器配置**：设置页可维护资产、指标和 REST 接口；MQTT、OPC UA、Modbus 仍为后续阶段。配置管理及连接测试要求启用 `hmi_pin`，避免未认证请求读取接入拓扑或复用后端凭据。REST 凭据使用 Fernet 加密后保存在工作区 `.connector_credentials.enc`，必须在服务环境中设置 `EDGE_ADVISER_CREDENTIAL_KEY`；可用 `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` 生成密钥，并通过部署密钥管理系统保存。不要将密钥写入项目文件或配置备份；丢失密钥后原凭据无法恢复。删除资产前会下载不含密钥值和凭据标识的 JSON 备份，历史记录会保留。
+**设备与连接器配置**：设置页可维护资产、指标、REST 接口、MQTT 消息源、OPC UA 节点和 Modbus TCP 寄存器。配置管理及连接测试要求启用 `hmi_pin`，避免未认证请求读取接入拓扑或复用后端凭据。REST 请求头、MQTT/OPC UA 用户名密码及 OPC UA 私钥密码使用 Fernet 加密后保存在工作区 `.connector_credentials.enc`，必须在服务环境中设置 `EDGE_ADVISER_CREDENTIAL_KEY`；可用 `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` 生成密钥，并通过部署密钥管理系统保存。不要将密钥写入项目文件或配置备份；丢失密钥后原凭据无法恢复。删除资产前会下载不含密钥值和凭据标识的 JSON 备份，历史记录会保留。
 
 ### 6. 本地演示模式（无需任何模型）
 
@@ -175,7 +175,15 @@ edge_adviser/
 
 - **SimulatorSource**：内置，带漂移/故障克隆，离线跑通全程（MVP 默认）
 - **RestSource**：从 HTTP 拉取 JSON 样本窗口（已实现）
-- **MqttSource / OpcUaSource / ModbusSource**：结构化骨架，按字段部署时接入对应客户端（paho-mqtt / asyncua / pymodbus）
+- **MqttSource**：订阅 `mqtt://` 或 `mqtts://` Broker 的 JSON 消息，支持 QoS 0–2、后端用户名/密码凭据、时间戳/响应路径/指标映射，并在进程内保留有界样本缓存；连接测试等待并校验实时消息，不模拟历史查询；启用认证时建议使用 `mqtts://` 保护传输中的凭据
+- **OpcUaSource**：按配置的 NodeId 周期读取 OPC UA 数值节点，保留有界样本窗口；支持匿名安全模式或使用客户端证书/可信服务端证书的签名及签名加密连接，并将用户名、密码和私钥密码存于后端凭据库
+- **ModbusSource**：使用 Modbus TCP 按采样周期读取线圈、离散输入、保持寄存器和输入寄存器；支持 bool、uint16/int16、uint32/int32、float32、缩放、偏移和 32 位字序配置
+
+MQTT 消息为单条 JSON 对象，默认时间戳字段为 `ts`；例如 `{"ts":"2026-11-23T10:00:00Z","temperature":63.2}`。Unix 秒时间戳也可用；时间戳路径从消息根对象解析，响应路径选取指标对象，字段映射支持点分隔路径。MQTT 缓存只存在于后端进程内，服务重启后重新订阅，离线期间的历史消息不补采。
+
+OPC UA 每个资产需为所有指标配置一个 NodeId（例如 `temperature=ns=2;s=Pump.Temperature`），并将证书文件预置在运行后端的主机上。用户名密码认证必须选择签名或签名加密模式并配置客户端证书、客户端私钥和可信服务器证书；无安全模式仅用于可信网络中的匿名读取。
+
+Modbus TCP 每个指标需配置功能区、从零开始的地址和数据类型；32 位寄存器可指定 `big` 或 `little` 字序，并可设置缩放与偏移。Modbus TCP 不提供传输加密或身份认证，仅应连接可信的隔离网络；首版不包含串口 RTU。
 
 ## 配置模型参考（config.sample.json）
 

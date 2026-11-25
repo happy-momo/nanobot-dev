@@ -35,6 +35,10 @@ interface EditorForm {
   connector: 'simulator' | 'rest' | 'mqtt' | 'opcua' | 'modbus'
   url: string
   timeout_s: string
+  modbus_unit_id: string
+  modbus_register_map: string
+  topic: string
+  qos: string
   start_param: string
   end_param: string
   timestamp_field: string
@@ -42,6 +46,13 @@ interface EditorForm {
   field_map: string
   auth_header: 'authorization' | 'x-api-key'
   auth_value: string
+  mqtt_username: string
+  mqtt_password: string
+  opcua_security_mode: 'none' | 'sign' | 'sign_and_encrypt'
+  opcua_client_certificate: string
+  opcua_client_private_key: string
+  opcua_server_certificate: string
+  opcua_private_key_password: string
   credential_id: string
 }
 
@@ -65,9 +76,14 @@ const form = reactive<EditorForm>({
   asset_id: '', name: '', kind: 'machine', description: '',
   sample_freq_s: '1', window_s: '60', enabled: true,
   connector: 'rest', url: '', timeout_s: '10',
+  modbus_unit_id: '1', modbus_register_map: '',
+  topic: '', qos: '0',
   start_param: 'start', end_param: 'end', timestamp_field: 'ts',
   response_path: '', field_map: '', auth_header: 'authorization',
-  auth_value: '', credential_id: '',
+  auth_value: '', mqtt_username: '', mqtt_password: '',
+  opcua_security_mode: 'none', opcua_client_certificate: '',
+  opcua_client_private_key: '', opcua_server_certificate: '',
+  opcua_private_key_password: '', credential_id: '',
 })
 const metrics = ref<MetricForm[]>([])
 
@@ -112,9 +128,14 @@ function resetForm(): void {
     asset_id: '', name: '', kind: 'machine', description: '',
     sample_freq_s: '1', window_s: '60', enabled: true,
     connector: 'rest', url: '', timeout_s: '10',
+    modbus_unit_id: '1', modbus_register_map: '',
+    topic: '', qos: '0',
     start_param: 'start', end_param: 'end', timestamp_field: 'ts',
     response_path: '', field_map: '', auth_header: 'authorization',
-    auth_value: '', credential_id: '',
+    auth_value: '', mqtt_username: '', mqtt_password: '',
+    opcua_security_mode: 'none', opcua_client_certificate: '',
+    opcua_client_private_key: '', opcua_server_certificate: '',
+    opcua_private_key_password: '', credential_id: '',
   })
   metrics.value = [blankMetric()]
   formError.value = ''
@@ -141,12 +162,31 @@ function openEdit(asset: AssetConfiguration): void {
     enabled: asset.enabled,
     connector: asset.source?.kind || 'rest',
     url: asset.source?.url || '',
+    topic: asset.source?.topic || '',
+    qos: String(asset.source?.params?.qos ?? 0),
+    opcua_security_mode: String(asset.source?.params?.security_mode || 'none') as EditorForm['opcua_security_mode'],
+    opcua_client_certificate: String(asset.source?.params?.client_certificate || ''),
+    opcua_client_private_key: String(asset.source?.params?.client_private_key || ''),
+    opcua_server_certificate: String(asset.source?.params?.server_certificate || ''),
     timeout_s: numberField(asset.source?.params?.timeout_s) || '10',
+    modbus_unit_id: String(asset.source?.params?.unit_id ?? 1),
+    modbus_register_map: Object.entries(
+      (asset.source?.params?.register_map || {}) as Record<string, Record<string, unknown>>,
+    ).map(([metric, register]) => `${metric}=${[
+      register.area,
+      register.address,
+      register.type,
+      register.scale ?? 1,
+      register.offset ?? 0,
+      register.word_order ?? 'big',
+    ].map(String).join(',')}`).join('\n'),
     start_param: String(asset.source?.params?.start_param || 'start'),
     end_param: String(asset.source?.params?.end_param || 'end'),
     timestamp_field: String(asset.source?.params?.timestamp_field || 'ts'),
     response_path: String(asset.source?.params?.response_path || ''),
-    field_map: Object.entries((asset.source?.params?.field_map || {}) as Record<string, string>)
+    field_map: Object.entries((asset.source?.params?.[
+      asset.source?.kind === 'opcua' ? 'node_map' : 'field_map'
+    ] || {}) as Record<string, string>)
       .map(([target, source]) => `${target}=${source}`).join('\n'),
     credential_id: asset.source?.credential_id || '',
   })
@@ -181,6 +221,42 @@ function parseFieldMap(): Record<string, string> {
   return result
 }
 
+function parseModbusRegisterMap(): Record<string, Record<string, unknown>> {
+  const result: Record<string, Record<string, unknown>> = {}
+  for (const line of form.modbus_register_map.split('\n')) {
+    const text = line.trim()
+    if (!text) continue
+    const index = text.indexOf('=')
+    if (index < 1 || index === text.length - 1) {
+      throw new Error('Modbus 映射格式应为：指标键=功能区,地址,类型[,缩放,偏移,字序]')
+    }
+    const metric = text.slice(0, index).trim()
+    const fields = text.slice(index + 1).split(',').map((field) => field.trim())
+    if (result[metric]) throw new Error(`Modbus 指标映射重复：${metric}`)
+    if (!metric || fields.length < 3 || fields.length > 6 || fields.slice(0, 3).some((field) => !field)) {
+      throw new Error('Modbus 映射格式应为：指标键=功能区,地址,类型[,缩放,偏移,字序]')
+    }
+    const address = Number(fields[1])
+    const scale = fields[3] ? Number(fields[3]) : 1
+    const offset = fields[4] ? Number(fields[4]) : 0
+    if (!Number.isInteger(address) || address < 0 || address > 65535) {
+      throw new Error(`Modbus 地址无效：${metric}`)
+    }
+    if (!Number.isFinite(scale) || !Number.isFinite(offset)) {
+      throw new Error(`Modbus 缩放或偏移无效：${metric}`)
+    }
+    result[metric] = {
+      area: fields[0],
+      address,
+      type: fields[2],
+      scale,
+      offset,
+      word_order: fields[5] || 'big',
+    }
+  }
+  return result
+}
+
 function buildConfig(): AssetConfigurationInput {
   const sampleFreq = Number(form.sample_freq_s)
   const window = Number(form.window_s)
@@ -193,17 +269,41 @@ function buildConfig(): AssetConfigurationInput {
   if (form.connector === 'simulator') {
     params.regime = 'clean'
     params.sample_freq_s = sampleFreq
-  } else {
+  } else if (
+    form.connector === 'rest' || form.connector === 'mqtt'
+    || form.connector === 'opcua' || form.connector === 'modbus'
+  ) {
     const timeout = Number(form.timeout_s)
     if (!Number.isFinite(timeout) || timeout < 1 || timeout > 30) {
       throw new Error('连接超时须在 1 到 30 秒之间')
     }
     params.timeout_s = timeout
-    params.start_param = form.start_param.trim()
-    params.end_param = form.end_param.trim()
-    params.timestamp_field = form.timestamp_field.trim()
-    params.response_path = form.response_path.trim()
-    params.field_map = parseFieldMap()
+    if (form.connector === 'rest') {
+      params.start_param = form.start_param.trim()
+      params.end_param = form.end_param.trim()
+    } else if (form.connector === 'mqtt') {
+      const qos = integerField(form.qos, 'QoS', 0)
+      if (qos > 2) throw new Error('MQTT QoS 必须是 0、1 或 2')
+      params.qos = qos
+    } else if (form.connector === 'opcua') {
+      params.security_mode = form.opcua_security_mode
+      params.node_map = parseFieldMap()
+      if (form.opcua_security_mode !== 'none') {
+        params.client_certificate = form.opcua_client_certificate.trim()
+        params.client_private_key = form.opcua_client_private_key.trim()
+        params.server_certificate = form.opcua_server_certificate.trim()
+      }
+    } else {
+      const unitId = integerField(form.modbus_unit_id, 'Unit ID', 0)
+      if (unitId > 255) throw new Error('Modbus Unit ID 须在 0 到 255 之间')
+      params.unit_id = unitId
+      params.register_map = parseModbusRegisterMap()
+    }
+    if (form.connector === 'rest' || form.connector === 'mqtt') {
+      params.timestamp_field = form.timestamp_field.trim()
+      params.response_path = form.response_path.trim()
+      params.field_map = parseFieldMap()
+    }
   }
   return {
     asset_id: form.asset_id.trim(),
@@ -228,9 +328,13 @@ function buildConfig(): AssetConfigurationInput {
     })),
     source: {
       kind: form.connector,
-      url: form.connector === 'rest' ? form.url.trim() : '',
-      poll_interval_s: 1,
-      credential_id: form.connector === 'rest' ? form.credential_id : '',
+      url: form.connector === 'rest' || form.connector === 'mqtt'
+        || form.connector === 'opcua' || form.connector === 'modbus'
+        ? form.url.trim() : '',
+      topic: form.connector === 'mqtt' ? form.topic.trim() : '',
+      poll_interval_s: form.connector === 'opcua' || form.connector === 'modbus' ? sampleFreq : 1,
+      credential_id: form.connector === 'rest' || form.connector === 'mqtt' || form.connector === 'opcua'
+        ? form.credential_id : '',
       params,
     },
   }
@@ -247,38 +351,94 @@ function integerField(value: string, label: string, minimum: number): number {
 watch(() => [form, metrics.value], () => {
   testResult.value = null
 }, { deep: true })
-watch(() => form.connector, (connector) => {
-  if (connector !== 'rest') form.auth_value = ''
+watch(() => form.connector, (connector, previous) => {
+  if (connector === previous) return
+  form.auth_value = ''
+  form.mqtt_username = ''
+  form.mqtt_password = ''
+  form.opcua_private_key_password = ''
+  if ((connector === 'rest') !== (previous === 'rest')
+      || (connector === 'mqtt') !== (previous === 'mqtt')
+      || (connector === 'opcua') !== (previous === 'opcua')) {
+    form.credential_id = ''
+  }
+  if (pendingCredentialId.value) {
+    const pending = pendingCredentialId.value
+    pendingCredentialId.value = ''
+    deleteUnusedCredential(pending).catch((error: unknown) => {
+      toast(error instanceof Error ? `未使用凭据清理失败：${error.message}` : '未使用凭据清理失败', 'warn')
+    })
+  }
 })
 
 async function buildRequestConfig(): Promise<AssetConfigurationInput> {
   const config = buildConfig()
   await saveNewCredential()
-  config.source.credential_id = form.connector === 'rest' ? form.credential_id : ''
+  config.source.credential_id = form.connector === 'rest'
+    || form.connector === 'mqtt' || form.connector === 'opcua'
+    ? form.credential_id : ''
   return config
 }
 
 async function saveNewCredential(): Promise<void> {
-  if (form.connector !== 'rest') {
+  if (form.connector !== 'rest' && form.connector !== 'mqtt' && form.connector !== 'opcua') {
     if (pendingCredentialId.value) {
       await deleteUnusedCredential(pendingCredentialId.value)
       pendingCredentialId.value = ''
     }
     form.auth_value = ''
+    form.mqtt_username = ''
+    form.mqtt_password = ''
+    form.opcua_private_key_password = ''
     return
   }
-  if (!form.auth_value.trim()) return
+  let credentialPayload:
+    | { headers: Record<string, string> }
+    | { username: string; password: string; private_key_password?: string }
+    | { private_key_password: string }
+    | null = null
+  if (form.connector === 'rest' && form.auth_value.trim()) {
+    credentialPayload = { headers: { [form.auth_header]: form.auth_value } }
+  }
+  if (form.connector === 'mqtt') {
+    const username = form.mqtt_username.trim()
+    const password = form.mqtt_password
+    if (Boolean(username) !== Boolean(password)) {
+      throw new Error('MQTT 用户名和密码必须同时填写')
+    }
+    if (username && password) credentialPayload = { username, password }
+  }
+  if (form.connector === 'opcua') {
+    const username = form.mqtt_username.trim()
+    const password = form.mqtt_password
+    const privateKeyPassword = form.opcua_private_key_password
+    if (form.credential_id && (username || password || privateKeyPassword)) {
+      throw new Error('请先移除已保存凭据，再填写完整的新凭据')
+    }
+    if (Boolean(username) !== Boolean(password)) {
+      throw new Error('OPC UA 用户名和密码必须同时填写')
+    }
+    if (username && password) {
+      credentialPayload = privateKeyPassword
+        ? { username, password, private_key_password: privateKeyPassword }
+        : { username, password }
+    } else if (privateKeyPassword) {
+      credentialPayload = { private_key_password: privateKeyPassword }
+    }
+  }
+  if (!credentialPayload) return
   if (!credentialStoreReady.value) {
     throw new Error('凭据加密未启用，请先由管理员配置 EDGE_ADVISER_CREDENTIAL_KEY')
   }
   if (!pendingCredentialId.value) {
     pendingCredentialId.value = `ea-${crypto.randomUUID().replace(/-/g, '')}`
   }
-  await putConnectorCredentials(pendingCredentialId.value, {
-    [form.auth_header]: form.auth_value,
-  })
+  await putConnectorCredentials(pendingCredentialId.value, credentialPayload)
   form.credential_id = pendingCredentialId.value
   form.auth_value = ''
+  form.mqtt_username = ''
+  form.mqtt_password = ''
+  form.opcua_private_key_password = ''
 }
 
 async function runTest(): Promise<void> {
@@ -288,7 +448,14 @@ async function runTest(): Promise<void> {
   try {
     const config = await buildRequestConfig()
     testResult.value = await testConnector(config)
-    if (testResult.value.ok) toast('连续采集测试通过')
+    if (testResult.value.ok) {
+      const liveTests: Partial<Record<EditorForm['connector'], string>> = {
+        mqtt: 'MQTT 实时消息测试通过',
+        opcua: 'OPC UA 实时读取测试通过',
+        modbus: 'Modbus 实时读取测试通过',
+      }
+      toast(liveTests[form.connector] || '连续采集测试通过')
+    }
     else toast('测试完成，存在需要处理的问题', 'warn')
   } catch (error) {
     formError.value = error instanceof Error ? error.message : '连接测试失败'
@@ -333,6 +500,23 @@ async function discardEditor(): Promise<void> {
 
 async function deleteUnusedCredential(id: string): Promise<void> {
   await deleteConnectorCredentials(id)
+}
+
+async function clearCredential(): Promise<void> {
+  formError.value = ''
+  if (pendingCredentialId.value) {
+    try {
+      await deleteUnusedCredential(pendingCredentialId.value)
+    } catch (error) {
+      formError.value = error instanceof Error ? error.message : '未使用凭据清理失败'
+      return
+    }
+    pendingCredentialId.value = ''
+  }
+  form.credential_id = ''
+  form.auth_value = ''
+  form.mqtt_username = ''
+  form.mqtt_password = ''
 }
 
 function confirmDelete(asset: AssetConfiguration): void {
@@ -495,16 +679,64 @@ onMounted(load)
                 <select v-model="form.connector">
                   <option value="rest">REST 接口</option>
                   <option value="simulator">模拟数据</option>
-                  <option value="mqtt" disabled>MQTT（后续版本）</option>
-                  <option value="opcua" disabled>OPC UA（后续版本）</option>
-                  <option value="modbus" disabled>Modbus（后续版本）</option>
+                  <option value="mqtt">MQTT 消息</option>
+                  <option value="opcua">OPC UA</option>
+                  <option value="modbus">Modbus TCP</option>
                 </select>
               </label>
               <label v-if="form.connector === 'rest'" class="cm-wide">接口地址
                 <input v-model="form.url" type="url" required placeholder="https://host/api/telemetry">
               </label>
-              <label v-if="form.connector === 'rest'">连接超时（秒）
+              <label v-if="form.connector === 'mqtt'" class="cm-wide">Broker 地址
+                <input v-model="form.url" type="url" required placeholder="mqtt://broker:1883 或 mqtts://broker:8883">
+              </label>
+              <label v-if="form.connector === 'opcua'" class="cm-wide">OPC UA Endpoint
+                <input v-model="form.url" type="url" required placeholder="opc.tcp://192.168.10.20:4840/UA/Server">
+              </label>
+              <label v-if="form.connector === 'modbus'" class="cm-wide">Modbus TCP 地址
+                <input v-model="form.url" type="url" required placeholder="modbus://192.168.10.20:502">
+              </label>
+              <label v-if="form.connector === 'mqtt'" class="cm-wide">Topic 过滤器
+                <input v-model="form.topic" required placeholder="factory/line-1/pump-01">
+              </label>
+              <label v-if="form.connector === 'rest' || form.connector === 'mqtt' || form.connector === 'opcua' || form.connector === 'modbus'">连接超时（秒）
                 <input v-model="form.timeout_s" type="number" min="1" max="30" step="1">
+              </label>
+              <label v-if="form.connector === 'modbus'">Unit ID
+                <input v-model="form.modbus_unit_id" type="number" min="0" max="255" step="1">
+              </label>
+              <label v-if="form.connector === 'modbus'" class="cm-wide">寄存器映射
+                <textarea v-model="form.modbus_register_map" rows="4" required
+                  placeholder="temp=holding_registers,0,float32&#10;rpm=input_registers,2,uint16,0.1&#10;running=coils,0,bool"></textarea>
+              </label>
+              <label v-if="form.connector === 'opcua'">安全模式
+                <select v-model="form.opcua_security_mode">
+                  <option value="none">无（匿名访问）</option>
+                  <option value="sign">签名</option>
+                  <option value="sign_and_encrypt">签名并加密</option>
+                </select>
+              </label>
+              <label v-if="form.connector === 'opcua'" class="cm-wide">节点映射
+                <textarea v-model="form.field_map" rows="4" required
+                  placeholder="temperature=ns=2;s=Pump.Temperature&#10;vibration=ns=2;s=Pump.Vibration"></textarea>
+              </label>
+              <template v-if="form.connector === 'opcua' && form.opcua_security_mode !== 'none'">
+                <label>客户端证书路径
+                  <input v-model="form.opcua_client_certificate" required placeholder="/etc/edge-adviser/certs/client-cert.pem">
+                </label>
+                <label>客户端私钥路径
+                  <input v-model="form.opcua_client_private_key" required placeholder="/etc/edge-adviser/certs/client-key.pem">
+                </label>
+                <label class="cm-wide">可信服务器证书路径
+                  <input v-model="form.opcua_server_certificate" required placeholder="/etc/edge-adviser/certs/server-cert.pem">
+                </label>
+              </template>
+              <label v-if="form.connector === 'mqtt'">QoS
+                <select v-model="form.qos">
+                  <option value="0">0 — 至多一次</option>
+                  <option value="1">1 — 至少一次</option>
+                  <option value="2">2 — 恰好一次</option>
+                </select>
               </label>
               <label v-if="form.connector === 'rest'">开始时间参数
                 <input v-model="form.start_param" required>
@@ -512,13 +744,13 @@ onMounted(load)
               <label v-if="form.connector === 'rest'">结束时间参数
                 <input v-model="form.end_param" required>
               </label>
-              <label v-if="form.connector === 'rest'">时间戳字段
+              <label v-if="form.connector === 'rest' || form.connector === 'mqtt'">时间戳字段
                 <input v-model="form.timestamp_field" required>
               </label>
-              <label v-if="form.connector === 'rest'">响应数据路径
-                <input v-model="form.response_path" placeholder="留空表示响应本身是数组">
+              <label v-if="form.connector === 'rest' || form.connector === 'mqtt'">响应数据路径
+                <input v-model="form.response_path" placeholder="例如 data；留空表示使用响应根对象">
               </label>
-              <label v-if="form.connector === 'rest'" class="cm-wide">指标字段映射
+              <label v-if="form.connector === 'rest' || form.connector === 'mqtt'" class="cm-wide">指标字段映射
                 <textarea v-model="form.field_map" rows="3" placeholder="温度=temperature&#10;振动=vibration&#10;留空时按指标键读取" />
               </label>
               <label v-if="form.connector === 'rest'">认证请求头
@@ -531,6 +763,27 @@ onMounted(load)
                 <input v-model="form.auth_value" type="password" autocomplete="new-password"
                   :placeholder="form.credential_id ? '已保存；留空保持不变，填写新值将轮换凭据' : '留空表示该接口无需认证'">
               </label>
+              <button v-if="form.connector === 'rest' && form.credential_id" type="button"
+                class="cm-secondary" @click="clearCredential">移除已保存凭据</button>
+              <label v-if="form.connector === 'mqtt' || form.connector === 'opcua'">用户名
+                <input v-model="form.mqtt_username" autocomplete="off"
+                  :placeholder="form.credential_id
+                    ? (form.connector === 'opcua' ? '已保存；更换前请先移除' : '已保存；留空保持不变')
+                    : '可留空表示匿名连接'">
+              </label>
+              <label v-if="form.connector === 'mqtt' || form.connector === 'opcua'">密码
+                <input v-model="form.mqtt_password" type="password" autocomplete="new-password"
+                  :placeholder="form.credential_id
+                    ? (form.connector === 'opcua' ? '已保存；更换前请先移除' : '已保存；留空保持不变')
+                    : '可留空表示匿名连接'">
+              </label>
+              <label v-if="form.connector === 'opcua' && form.opcua_security_mode !== 'none'">
+                私钥密码
+                <input v-model="form.opcua_private_key_password" type="password" autocomplete="new-password"
+                  :placeholder="form.credential_id ? '已保存；更换前请先移除' : '私钥未加密时留空'">
+              </label>
+              <button v-if="(form.connector === 'mqtt' || form.connector === 'opcua') && form.credential_id" type="button"
+                class="cm-secondary" @click="clearCredential">移除已保存凭据</button>
               <p v-if="form.connector === 'simulator'" class="cm-note cm-wide">
                 模拟数据仅支持 temp、vibration、rpm 指标，用于开发和演示。
               </p>
@@ -540,12 +793,21 @@ onMounted(load)
               <p v-if="form.connector === 'rest' && form.credential_id" class="cm-note cm-wide">
                 此连接器已绑定后端凭据。凭据值不会回显；留空可保持现有凭据。
               </p>
+              <p v-if="form.connector === 'mqtt'" class="cm-note cm-wide">
+                订阅 JSON 消息流；时间戳支持 ISO-8601 或 Unix 秒，映射字段支持点分隔路径。认证连接建议使用 mqtts://；消息只在后端有界缓存中保留，不写入配置备份。
+              </p>
+              <p v-if="form.connector === 'opcua'" class="cm-note cm-wide">
+                节点映射需为每个指标指定 NodeId。采集周期使用上方采样间隔；启用用户名密码认证时必须选择安全模式，且证书文件需预先安全放置在后端主机。凭据不回显；更换时请先移除已保存凭据，再填写完整的新凭据。无安全模式只用于可信网络中的匿名读取。
+              </p>
+              <p v-if="form.connector === 'modbus'" class="cm-note cm-wide">
+                每行格式为“指标键=功能区,地址,类型[,缩放,偏移,字序]”，支持线圈、离散输入、保持寄存器和输入寄存器；寄存器类型支持 uint16、int16、uint32、int32、float32，32 位数可选 big/little 字序。地址从 0 开始。Modbus TCP 本身不提供加密或身份认证，请仅连接可信的隔离网络。
+              </p>
             </div>
           </fieldset>
 
           <div v-if="testResult" class="cm-test" :class="{ 'is-good': testResult.ok, 'is-bad': !testResult.ok }">
-            <strong>{{ testResult.ok ? '连续采集测试通过' : '测试未通过' }}</strong>
-            <span>共 {{ testResult.total_samples }} 个样本，完成 {{ testResult.runs.length }} 次采集</span>
+            <strong>{{ testResult.ok ? (form.connector === 'mqtt' ? 'MQTT 实时消息测试通过' : form.connector === 'opcua' ? 'OPC UA 实时读取测试通过' : form.connector === 'modbus' ? 'Modbus 实时读取测试通过' : '连续采集测试通过') : '测试未通过' }}</strong>
+            <span>共 {{ testResult.total_samples }} 个样本，{{ form.connector === 'mqtt' || form.connector === 'opcua' || form.connector === 'modbus' ? '验证实时数据' : `完成 ${testResult.runs.length} 次采集` }}</span>
             <ul v-if="testResult.issues.length"><li v-for="issue in testResult.issues" :key="issue">{{ issue }}</li></ul>
             <pre v-if="testResult.sample_preview.length">{{ JSON.stringify(testResult.sample_preview, null, 2) }}</pre>
           </div>
@@ -673,7 +935,10 @@ onMounted(load)
 .cm-test ul { margin: 2px 0; padding-left: 18px; }
 .cm-test pre { max-height: 160px; overflow: auto; margin: 4px 0 0; padding: 8px;
   background: var(--bg1); color: var(--tx); font: 10px var(--font-mono); }
-.cm-dialog-foot { display: flex; align-items: center; gap: 8px; padding-top: 12px; }
+.cm-dialog-foot {
+  position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px;
+  padding-top: 12px; border-top: 1px solid var(--line); background: var(--bg0);
+}
 .cm-spacer { flex: 1; }
 .cm-delete > p { margin: 12px 18px 0; color: var(--tx); font-size: 12px; line-height: 1.6; }
 .cm-delete > .cm-error { margin: 10px 18px 0; }

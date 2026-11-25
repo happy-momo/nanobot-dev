@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Settings — the 设置页 (spec §5.6): three read-only hairline panels.
+// Settings — asset connector configuration followed by three read-only panels.
 //  * 服务状态: /api/version (版本/DEMO/资产数/PIN) + /api/health (健康/
 //    调度器/心跳/网关/有快照资产数)
 //  * 运行观测: /api/stats — provider 成功率/调用数/gated_refusals/MTTA/
