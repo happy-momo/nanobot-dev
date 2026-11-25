@@ -63,6 +63,17 @@ class Supervisor:
     credential_lookup: Callable[[str], dict[str, str]] | None = None
     _sources: dict[str, DataSource] = field(default_factory=dict)
     _state: dict[str, ScheduleState] = field(default_factory=dict)
+    # per-asset job mutex: a manual run-now/report/learn must not execute the
+    # same window concurrently with a scheduler tick (two snapshots in one
+    # window, double LLM spend, interleaved runlog). Locks are created lazily
+    # per asset and never removed (bounded by the asset count).
+    _asset_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+
+    def _lock_for(self, asset_id: str) -> asyncio.Lock:
+        lock = self._asset_locks.get(asset_id)
+        if lock is None:
+            lock = self._asset_locks[asset_id] = asyncio.Lock()
+        return lock
 
     async def start(self) -> None:
         await self.gateway.astart()
@@ -75,6 +86,17 @@ class Supervisor:
                     logger.warning("source not available for {a}: {e}", a=spec.asset_id, e=exc)
                     log_run_event(self.store, spec.asset_id, "serve_start", "no_data",
                                   reason=f"source_unwired: {spec.kind.value}",
+                                  detail=str(exc)[:200])
+                except Exception as exc:
+                    # 0.5.2: any other construction failure (bad MQTT URL, missing
+                    # OPC-UA cert, invalid Modbus register map — the 0.5.0
+                    # validators raise ValueError) must isolate the BAD ASSET,
+                    # not prevent the whole HMI from coming up. The asset's run
+                    # path archives empty windows → offline state machine →
+                    # alert, so the failure stays visible to the operator.
+                    logger.warning("source init failed for {a}: {e}", a=spec.asset_id, e=exc)
+                    log_run_event(self.store, spec.asset_id, "serve_start", "no_data",
+                                  reason=f"source_failed: {spec.kind.value}",
                                   detail=str(exc)[:200])
         # P4: warn + audit any asset with zero snapshots at startup so a cold
         # asset is never silently treated as healthy.
@@ -189,7 +211,14 @@ class Supervisor:
         Now data-integrity-aware: empty windows are archived as an
         INSUFFICIENT/OFFLINE snapshot (audit + state machine), the consecutive-empty
         counter drives the offline verdict, and a runlog entry records the outcome.
+        Serialized per asset against run_deep_report/run_learn so a manual
+        trigger cannot interleave with a scheduler tick on the same asset.
         """
+        async with self._lock_for(asset.asset_id):
+            return await self._run_once_locked(asset, src)
+
+    async def _run_once_locked(self, asset: AssetSpec,
+                               src: DataSource | None = None) -> dict[str, Any]:
         import datetime as _dt
         started = time.time()
         st = self._state.setdefault(asset.asset_id, ScheduleState())
@@ -268,8 +297,13 @@ class Supervisor:
         """Full deep report via strong model + archive.
 
         Gated on a fresh snapshot; a missing/stale snapshot is recorded in the
-        runlog so a day with no report is traceable (P2).
+        runlog so a day with no report is traceable (P2). Serialized per asset
+        against run_once/run_learn (same-window double execution).
         """
+        async with self._lock_for(asset.asset_id):
+            return await self._run_deep_report_locked(asset)
+
+    async def _run_deep_report_locked(self, asset: AssetSpec) -> dict[str, Any]:
         gate = gate_snapshot_for_read(self.store, asset, self.config)
         if not gate.ok:
             log_run_event(self.store, asset.asset_id, "deep_report", "no_data",
@@ -297,7 +331,8 @@ class Supervisor:
                 "degraded": result.degraded, "error": result.error}
 
     async def run_learn(self, asset: AssetSpec) -> LLMResult:
-        return await self.learner.learn_asset(asset, role=ModelRole.ONLINE)
+        async with self._lock_for(asset.asset_id):
+            return await self.learner.learn_asset(asset, role=ModelRole.ONLINE)
 
     async def run_due_jobs(self, asset: AssetSpec, now: "Any") -> None:
         """Fire deep-report / learn when their cron expressions are due.

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Iterable
 
 from sse_starlette.sse import EventSourceResponse
@@ -24,6 +25,15 @@ def _to_sse(ev: dict[str, Any]) -> dict[str, str]:
         "event": ev.get("kind", "message"),
         "data": json.dumps(ev.get("payload") or {}, ensure_ascii=False),
     }
+
+
+# Slow-consumer backpressure: a stalled client must not accumulate an unbounded
+# in-memory backlog. Close the stream on overflow so EventSource reconnects and
+# the client can resync from REST plus the bus replay cache; never silently drop
+# an alert or task terminal event.
+STREAM_QUEUE_MAX = 256
+_STREAM_OVERFLOW = object()
+logger = logging.getLogger(__name__)
 
 
 def _replay_payloads(bus: EventBus, kinds: set[str], assets: set[str] | None) -> list[dict[str, Any]]:
@@ -55,12 +65,29 @@ async def stream_bus(
     """
     kset: set[str] = set(kinds)
     assetset: set[str] = set(assets or [])
-    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=STREAM_QUEUE_MAX)
+    overflowed = False
 
     async def relay(ev: dict[str, Any]) -> None:
+        nonlocal overflowed
+        if overflowed:
+            return
         if predicate is not None and not predicate(ev):
             return
-        await queue.put(ev)
+        try:
+            queue.put_nowait(ev)
+        except asyncio.QueueFull:
+            # A bounded queue cannot preserve an arbitrarily long backlog.
+            # End the stream instead of dropping an event; reconnecting clients
+            # resync current state and replay the latest event per asset/kind.
+            overflowed = True
+            try:
+                while True:
+                    queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            queue.put_nowait(_STREAM_OVERFLOW)
+            logger.warning("SSE slow consumer exceeded queue limit; closing stream")
 
     def _pass(ev: dict[str, Any]) -> bool:
         return predicate is None or bool(predicate(ev))
@@ -83,6 +110,8 @@ async def stream_bus(
                 except asyncio.TimeoutError:
                     yield _to_sse({"kind": "ping", "asset_id": "", "payload": {}})
                     continue
+                if ev is _STREAM_OVERFLOW:
+                    return
                 yield _to_sse(ev)
         finally:
             if sub_task is not None:

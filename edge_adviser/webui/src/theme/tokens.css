@@ -1,4 +1,7 @@
 :root {
+  /* dark-only UI: native controls (checkbox/select/date/validation popups)
+     must render dark too, not just our styled surfaces */
+  color-scheme: dark;
   --bg0: #04070D; --bg1: #080F1A; --bg2: #0C1626; --bg3: #101D30;
   --line: #14243A; --line-2: #1E3552;
   --tx-hi: #E9F2FC; --tx: #9FB4CC; --tx-dim: #5C7189;

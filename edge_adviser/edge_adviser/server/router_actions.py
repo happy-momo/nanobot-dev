@@ -33,6 +33,13 @@ from .streaming import stream_bus
 
 router = APIRouter(tags=["actions"])
 
+# Background report/learn tasks run unattended: a provider that hangs (socket
+# stuck in a retry chain) would otherwise hold phase=start forever and the
+# task SSE stream never reaches a terminal state. 10 minutes covers a slow
+# provider chain (timeout_s × degradation hops); beyond that the task is
+# genuinely wedged and must be terminated so the client sees phase=timeout.
+TASK_TIMEOUT_S = 600.0
+
 
 async def _state(request: Request) -> AppState:
     return request.app.state.edge
@@ -120,21 +127,28 @@ async def report(request: Request, asset_id: str,
         async with _task(state, asset_id, "report", token=token) as task:
             started = time.time()
             try:
-                res = await state.supervisor.run_deep_report(asset)
+                res = await asyncio.wait_for(
+                    state.supervisor.run_deep_report(asset), timeout=TASK_TIMEOUT_S)
                 from ..core.runlog import log_run_event
                 if isinstance(res, dict) and res.get("error"):
                     log_run_event(state.store, asset_id, "deep_report", "gated",
                                   reason=res["error"][:200], actor="hmi",
                                   elapsed_s=round(time.time() - started, 3))
-                    task.mark_failed()
+                    task.mark_failed(res["error"])
                     return
                 log_run_event(state.store, asset_id, "deep_report", "ok",
                               reason=f"provider={res.get('provider', '')}",
                               actor="hmi",
                               elapsed_s=round(time.time() - started, 3),
                               detail=str(res.get("report_dir", ""))[:200])
+            except asyncio.TimeoutError:
+                from ..core.runlog import log_run_event
+                log_run_event(state.store, asset_id, "deep_report", "exception",
+                              reason=f"task timeout after {TASK_TIMEOUT_S}s", actor="hmi",
+                              elapsed_s=round(time.time() - started, 3))
+                task.mark_timed_out(f"任务超时（>{TASK_TIMEOUT_S}s），已终止")
             except Exception as exc:  # noqa: BLE001 — must not kill the worker
-                task.mark_failed()
+                task.mark_failed(str(exc))
 
     background.add_task(_run)
     await state.bus.publish(KIND_TASK, asset_id,
@@ -157,7 +171,8 @@ async def learn(request: Request, asset_id: str,
         async with _task(state, asset_id, "learn", token=token) as task:
             started = time.time()
             try:
-                res = await state.supervisor.run_learn(asset)
+                res = await asyncio.wait_for(
+                    state.supervisor.run_learn(asset), timeout=TASK_TIMEOUT_S)
                 from ..core.runlog import log_run_event
                 if res.error:
                     err = res.error if res.error.startswith(("no_", "insufficient_data")) \
@@ -165,12 +180,18 @@ async def learn(request: Request, asset_id: str,
                     log_run_event(state.store, asset_id, "learn", "gated",
                                   reason=err[:200], actor="hmi",
                                   elapsed_s=round(time.time() - started, 3))
-                    task.mark_failed()
+                    task.mark_failed(err)
                     return
                 log_run_event(state.store, asset_id, "learn", "ok", actor="hmi",
                               elapsed_s=round(time.time() - started, 3))
-            except Exception:  # noqa: BLE001
-                task.mark_failed()
+            except asyncio.TimeoutError:
+                from ..core.runlog import log_run_event
+                log_run_event(state.store, asset_id, "learn", "exception",
+                              reason=f"task timeout after {TASK_TIMEOUT_S}s", actor="hmi",
+                              elapsed_s=round(time.time() - started, 3))
+                task.mark_timed_out(f"任务超时（>{TASK_TIMEOUT_S}s），已终止")
+            except Exception as exc:  # noqa: BLE001
+                task.mark_failed(str(exc))
 
     background.add_task(_run)
     await state.bus.publish(KIND_TASK, asset_id,
@@ -245,6 +266,8 @@ class _task:
         # other inline callers let _task mint its own.
         self.token = token or uuid4().hex  # unique per action so /stream/task/{token} can isolate it
         self.failed = False  # set by handlers returning fail() so __aexit__ reports it
+        self.error = ""      # gate/provider reason — the UI must say WHY it failed
+        self.terminal_phase: str | None = None
 
     async def __aenter__(self):
         await self.state.bus.publish(KIND_TASK, self.asset_id,
@@ -252,12 +275,24 @@ class _task:
                                               "phase": "start"})
         return self
 
-    def mark_failed(self) -> None:
+    def mark_failed(self, error: str = "") -> None:
         self.failed = True
+        self.terminal_phase = "failed"
+        if error:
+            self.error = error
+
+    def mark_timed_out(self, error: str) -> None:
+        self.failed = True
+        self.terminal_phase = "timeout"
+        self.error = error
 
     async def __aexit__(self, exc_type, exc, tb):
-        phase = "failed" if (exc or self.failed) else "done"
+        phase = self.terminal_phase or ("failed" if (exc or self.failed) else "done")
         payload = {"token": self.token, "kind": self.kind, "phase": phase}
         if exc_type is not None:
             payload["error"] = str(exc)
+        elif self.error:
+            # a gated/provider failure must carry its reason — "失败" alone is
+            # unactionable for the operator and unanswerable in an audit
+            payload["error"] = self.error
         await self.state.bus.publish(KIND_TASK, self.asset_id, payload=payload)

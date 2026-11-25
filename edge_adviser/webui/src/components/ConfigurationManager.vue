@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import {
   createAssetConfiguration, deleteAssetConfiguration, deleteConnectorCredentials, downloadAssetBackup,
   fetchConfiguration, putConnectorCredentials, testConnector,
@@ -71,6 +71,9 @@ const deleteStep = ref<'confirm' | 'backup' | 'deleting'>('confirm')
 const backupRevision = ref('')
 const backupSaved = ref(false)
 const backupLoading = ref(false)
+const editorDialog = ref<HTMLElement | null>(null)
+const deleteDialog = ref<HTMLElement | null>(null)
+let modalOpener: HTMLElement | null = null
 
 const form = reactive<EditorForm>({
   asset_id: '', name: '', kind: 'machine', description: '',
@@ -111,6 +114,69 @@ function blankMetric(): MetricForm {
   }
 }
 
+function rememberModalOpener(): void {
+  modalOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+}
+
+function focusDialog(getDialog: () => HTMLElement | null): void {
+  void nextTick(() => {
+    const dialog = getDialog()
+    const target = dialog?.querySelector<HTMLElement>(
+      'input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)',
+    )
+    target?.focus()
+  })
+}
+
+function restoreModalFocus(): void {
+  const opener = modalOpener
+  modalOpener = null
+  void nextTick(() => {
+    const target = opener?.isConnected
+      ? opener
+      : document.querySelector<HTMLElement>('.cm-toolbar .cm-primary')
+    target?.focus()
+  })
+}
+
+function trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement | null, dismiss: () => void): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    dismiss()
+    return
+  }
+  if (event.key !== 'Tab' || !dialog) return
+  const focusable = [...dialog.querySelectorAll<HTMLElement>(
+    'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+  )]
+  if (!focusable.length) {
+    event.preventDefault()
+    dialog.focus()
+    return
+  }
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (!dialog.contains(document.activeElement)) {
+    event.preventDefault()
+    const target = event.shiftKey ? last : first
+    target.focus()
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+function onEditorKeydown(event: KeyboardEvent): void {
+  trapDialogFocus(event, editorDialog.value, () => { void discardEditor() })
+}
+
+function onDeleteKeydown(event: KeyboardEvent): void {
+  trapDialogFocus(event, deleteDialog.value, closeDelete)
+}
+
 function numericOrNull(value: string): number | null {
   const text = value.trim()
   if (!text) return null
@@ -144,12 +210,15 @@ function resetForm(): void {
 }
 
 function openCreate(): void {
+  rememberModalOpener()
   editingId.value = ''
   resetForm()
   editorOpen.value = true
+  focusDialog(() => editorDialog.value)
 }
 
 function openEdit(asset: AssetConfiguration): void {
+  rememberModalOpener()
   editingId.value = asset.asset_id
   resetForm()
   Object.assign(form, {
@@ -204,6 +273,7 @@ function openEdit(asset: AssetConfiguration): void {
     min_samples: numberField(metric.min_samples) || '0',
   }))
   editorOpen.value = true
+  focusDialog(() => editorDialog.value)
 }
 
 function parseFieldMap(): Record<string, string> {
@@ -476,6 +546,7 @@ async function save(): Promise<void> {
       ? await updateAssetConfiguration(editingId.value, config)
       : await createAssetConfiguration(config)
     editorOpen.value = false
+    restoreModalFocus()
     if (result.warnings.length) toast(result.warnings.join('；'), 'warn')
     else toast(editingId.value ? '设备配置已更新' : '设备已添加')
     await load()
@@ -496,6 +567,7 @@ async function discardEditor(): Promise<void> {
     }
   }
   editorOpen.value = false
+  restoreModalFocus()
 }
 
 async function deleteUnusedCredential(id: string): Promise<void> {
@@ -520,17 +592,20 @@ async function clearCredential(): Promise<void> {
 }
 
 function confirmDelete(asset: AssetConfiguration): void {
+  rememberModalOpener()
   formError.value = ''
   deleteTarget.value = asset
   deleteStep.value = 'confirm'
   backupRevision.value = ''
   backupSaved.value = false
   backupLoading.value = false
+  focusDialog(() => deleteDialog.value)
 }
 
 function closeDelete(): void {
   if (backupLoading.value || deleteStep.value === 'deleting') return
   deleteTarget.value = null
+  restoreModalFocus()
 }
 
 async function createBackup(): Promise<void> {
@@ -558,6 +633,7 @@ async function deleteAsset(): Promise<void> {
     if (result.warnings.length) toast(result.warnings.join('；'), 'warn')
     else toast('设备配置已删除，历史记录已保留')
     deleteTarget.value = null
+    restoreModalFocus()
     await load()
   } catch (error) {
     deleteStep.value = 'confirm'
@@ -608,7 +684,15 @@ onMounted(load)
 
   <Teleport to="body">
     <div v-if="editorOpen" class="cm-overlay" @click.self="discardEditor">
-      <section class="cm-dialog" role="dialog" aria-modal="true" aria-labelledby="cm-title">
+      <section
+        ref="editorDialog"
+        class="cm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cm-title"
+        tabindex="-1"
+        @keydown="onEditorKeydown"
+      >
         <header class="cm-dialog-head">
           <div>
             <span class="cm-eyebrow">设备配置</span>
@@ -828,7 +912,15 @@ onMounted(load)
     </div>
 
     <div v-if="deleteTarget" class="cm-overlay" @click.self="closeDelete">
-      <section class="cm-dialog cm-delete" role="dialog" aria-modal="true" aria-labelledby="cm-delete-title">
+      <section
+        ref="deleteDialog"
+        class="cm-dialog cm-delete"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cm-delete-title"
+        tabindex="-1"
+        @keydown="onDeleteKeydown"
+      >
         <header class="cm-dialog-head">
           <div>
             <span class="cm-eyebrow">删除设备配置</span>

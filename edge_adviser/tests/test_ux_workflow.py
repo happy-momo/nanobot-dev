@@ -330,3 +330,86 @@ def test_mock_gateway_failure_injection_deterministic() -> None:
     async def learn_call():
         return await gw.run("q", role=ModelRole.ONLINE, session_key="asset:pump1:learn")
     assert asyncio.run(learn_call()).error is None
+
+
+# --------------------------------------------------------------------------- #
+#  0.5.2: background tasks — timeout + gate/provider error passthrough
+# --------------------------------------------------------------------------- #
+def test_report_gate_failure_carries_reason(tmp_path: Path) -> None:
+    """A real report action must publish the gate refusal on its task stream."""
+    c = _client(tmp_path)
+    r = c.post("/api/assets/pump1/report")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    token = r.json()["data"]["token"]
+    payload = next(
+        event["payload"] for event in c.app.state.edge.bus.snapshot_replay()
+        if event["kind"] == "task" and event["asset_id"] == "pump1"
+        and event["payload"].get("token") == token
+    )
+    assert payload["phase"] == "failed"
+    assert payload["error"].startswith("no_fresh_snapshot")
+
+
+def test_report_timeout_publishes_timeout_phase(tmp_path: Path, monkeypatch) -> None:
+    """A wedged provider is cancelled and its real task stream reaches timeout."""
+    from edge_adviser.server import router_actions
+
+    monkeypatch.setattr(router_actions, "TASK_TIMEOUT_S", 0.01)
+    c = _client(tmp_path)
+    edge = c.app.state.edge
+
+    async def hung_report(asset):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(edge.supervisor, "run_deep_report", hung_report)
+    r = c.post("/api/assets/pump1/report")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    token = r.json()["data"]["token"]
+    payload = next(
+        event["payload"] for event in edge.bus.snapshot_replay()
+        if event["kind"] == "task" and event["asset_id"] == "pump1"
+        and event["payload"].get("token") == token
+    )
+    assert payload["phase"] == "timeout"
+    assert "超时" in payload["error"]
+
+
+# --------------------------------------------------------------------------- #
+#  0.5.2: per-asset scheduler mutex — concurrent jobs serialize, don't interleave
+# --------------------------------------------------------------------------- #
+def test_per_asset_mutex_serializes_concurrent_runs(tmp_path: Path) -> None:
+    """Two concurrent run_once calls on one asset must not overlap."""
+    from edge_adviser.core.asset_store import AssetStore
+    from edge_adviser.core.scheduler import Supervisor
+
+    cfg, asset = _asset(tmp_path)
+    store = AssetStore(tmp_path)
+    from edge_adviser.report.generator import ReportGenerator
+    from edge_adviser.learn.learner import Learner
+    sup = Supervisor(config=cfg, store=store, gateway=_Stub(),
+                     report_gen=ReportGenerator(cfg, store, _Stub()),
+                     learner=Learner(cfg, store, _Stub()))
+    # a source whose pull is slow enough to prove serialization
+    class SlowSrc:
+        active = 0
+        peak = 0
+        kind = "simulator"
+        async def pull(self, start, end):
+            SlowSrc.active += 1
+            SlowSrc.peak = max(SlowSrc.peak, SlowSrc.active)
+            await asyncio.sleep(0.05)
+            SlowSrc.active -= 1
+            return [{"ts": (end.strftime("%Y-%m-%dT%H:%M:%S")), "temp": 50.0}]
+        async def aclose(self):
+            pass
+    sup._sources["pump1"] = SlowSrc()
+
+    async def two_runs():
+        return await asyncio.gather(
+            sup.run_once(asset), sup.run_once(asset))
+    r1, r2 = asyncio.run(two_runs())
+    assert SlowSrc.peak == 1, f"pulls must not overlap (peak concurrency {SlowSrc.peak})"
+    # both runs complete (second waits on the lock) and each archives a snapshot
+    assert r1.get("asset_id") == "pump1" or r2.get("asset_id") == "pump1"
+    snaps = store.list_snapshots("pump1", limit=10)
+    assert len(snaps) >= 1

@@ -123,6 +123,9 @@ interface RT {
   overviewCards: AssetCard[]
   live: Record<string, SnapshotPayload>
   alerts: AlertRec[]
+  /** some per-asset alert reads failed on the last loadAlerts — the list is
+   * partial, not empty (an ops surface must not fake "all clear") */
+  alertsPartialFailure: boolean
   ready: boolean
   pinRequired: boolean
   conn: Conn
@@ -147,6 +150,7 @@ export const useRuntime = defineStore('runtime', {
     overviewCards: [],
     live: {},
     alerts: [],
+    alertsPartialFailure: false,
     ready: false,
     pinRequired: false,
     conn: 'connecting',
@@ -303,11 +307,16 @@ export const useRuntime = defineStore('runtime', {
         cards.map((c) =>
           api.get<AlertRec[]>(`/api/assets/${c.asset_id}/alerts?include_acked=true`)))
       const all: AlertRec[] = []
+      let failed = 0
       for (const r of results) {
         if (r.status === 'fulfilled' && Array.isArray(r.value)) all.push(...r.value)
+        else failed++
       }
       all.sort((a, b) => b.ts - a.ts)
       this.alerts = all
+      // failed reads must not silently render as "没有符合条件的告警" — the
+      // alert list is an operations surface, a partial outage is a fact
+      this.alertsPartialFailure = failed > 0
     },
     startStreams() {
       // idempotent: callers may re-enter after a PIN round-trip

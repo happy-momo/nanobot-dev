@@ -77,3 +77,31 @@ async def test_unsubscribe_stops_delivery() -> None:
     await bus.publish("alert", "pump1")
     await asyncio.sleep(0.02)
     assert len(got) == 1  # unchanged after unsubscribe
+
+# --------------------------------------------------------------------------- #
+#  0.5.2: SSE slow-consumer backpressure (bounded queue, disconnect on overflow)
+# --------------------------------------------------------------------------- #
+def test_slow_stream_disconnects_on_queue_overflow(monkeypatch) -> None:
+    """A slow SSE consumer is disconnected instead of silently losing events."""
+    from edge_adviser.core.bus import KIND_SNAPSHOT
+    from edge_adviser.server import streaming
+
+    async def scenario():
+        bus = EventBus()
+        response = await streaming.stream_bus(bus, [KIND_SNAPSHOT], replay=False)
+        body = response.body_iterator
+        first_event = asyncio.create_task(body.__anext__())
+        await asyncio.sleep(0)
+        await bus.publish(KIND_SNAPSHOT, "pump1", payload={"sample_count": 1})
+        first = await first_event
+        assert '"sample_count": 1' in first["data"]
+
+        await bus.publish(KIND_SNAPSHOT, "pump1", payload={"sample_count": 2})
+        await bus.publish(KIND_SNAPSHOT, "pump1", payload={"sample_count": 3})
+        await bus.publish(KIND_SNAPSHOT, "pump1", payload={"sample_count": 4})
+        with pytest.raises(StopAsyncIteration):
+            await body.__anext__()
+        assert bus._watchers == []
+
+    monkeypatch.setattr(streaming, "STREAM_QUEUE_MAX", 2)
+    asyncio.run(scenario())

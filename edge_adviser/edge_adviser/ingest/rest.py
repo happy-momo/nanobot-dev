@@ -90,7 +90,3 @@ class RestSource(DataSource):
         if self._session is not None:
             await self._session.close()
             self._session = None
-
-
-async def _skeleton():  # pragma: no cover
-    raise NotImplementedError

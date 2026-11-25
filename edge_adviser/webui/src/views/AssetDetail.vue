@@ -9,7 +9,7 @@
      Task 7. The no-param route `/asset` picks the first known asset client-side
      (the router deliberately does not bake a fake :assetId into the URL). -->
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { MessageSquare, RefreshCw } from '@lucide/vue'
 import { useRuntime, type SnapshotPayload } from '../stores/runtime'
@@ -21,6 +21,7 @@ import VerdictFrame from '../components/VerdictFrame.vue'
 import StateDot from '../components/StateDot.vue'
 import ObsPanel from '../components/ObsPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
+import { createRequestSequence } from '../utils/requestSequence'
 import TabLive from './asset/TabLive.vue'
 import TabHistory from './asset/TabHistory.vue'
 import TabReports from './asset/TabReports.vue'
@@ -133,18 +134,18 @@ const ageStale = computed(() => {
 const reportCount = ref<number | null>(null)
 
 // seq guard: a slow report list for asset A must not become asset B's badge
-let reportCountSeq = 0
+const reportCountSequence = createRequestSequence()
 async function loadReportCount() {
-  const mySeq = ++reportCountSeq
+  const mySeq = reportCountSequence.next()
   const asset = assetId.value
   reportCount.value = null
   if (!asset) return
   try {
     const rows = await fetchReports(asset)
-    if (mySeq !== reportCountSeq || asset !== assetId.value) return
+    if (!reportCountSequence.isCurrent(mySeq) || asset !== assetId.value) return
     reportCount.value = Array.isArray(rows) ? rows.length : 0
   } catch {
-    if (mySeq !== reportCountSeq || asset !== assetId.value) return
+    if (!reportCountSequence.isCurrent(mySeq) || asset !== assetId.value) return
     reportCount.value = 0   // badge shows 0 rather than lying about the count
   }
 }
@@ -160,6 +161,29 @@ const TABS = [
 
 type TabKey = typeof TABS[number]['key']
 const activeTab = ref<TabKey>('live')
+
+function onTabKeydown(event: KeyboardEvent): void {
+  const tab = event.target instanceof HTMLElement
+    ? event.target.closest<HTMLButtonElement>('[role="tab"]')
+    : null
+  if (!tab) return
+  const current = TABS.findIndex((item) => item.key === tab.dataset.tabKey)
+  if (current < 0) return
+  let next = current
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (current + 1) % TABS.length
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (current - 1 + TABS.length) % TABS.length
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = TABS.length - 1
+  else return
+  const tablist = event.currentTarget
+  event.preventDefault()
+  activeTab.value = TABS[next].key
+  void nextTick(() => {
+    if (tablist instanceof HTMLElement) {
+      tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+    }
+  })
+}
 
 // ---------------------------------------------------------------- 立即采集 --
 const running = ref(false)
@@ -256,14 +280,18 @@ watch(assetId, () => {
       </header>
 
       <!-- ─── tab bar ────────────────────────────────────────────────────────── -->
-      <nav class="tabs" role="tablist" aria-label="资产详情视图">
+      <nav class="tabs" role="tablist" aria-label="资产详情视图" @keydown="onTabKeydown">
         <button
           v-for="t in TABS"
           :key="t.key"
           type="button"
           class="tab"
           role="tab"
+          :data-tab-key="t.key"
+          :id="`asset-tab-${t.key}`"
+          :tabindex="activeTab === t.key ? 0 : -1"
           :aria-selected="activeTab === t.key"
+          :aria-controls="activeTab === t.key ? `asset-panel-${t.key}` : undefined"
           :class="{ 'tab-on': activeTab === t.key }"
           @click="activeTab = t.key"
         >
@@ -273,7 +301,13 @@ watch(assetId, () => {
       </nav>
 
       <!-- ─── tab body ───────────────────────────────────────────────────────── -->
-      <div class="tab-body">
+      <div
+        :id="`asset-panel-${activeTab}`"
+        class="tab-body"
+        role="tabpanel"
+        tabindex="0"
+        :aria-labelledby="`asset-tab-${activeTab}`"
+      >
         <TabLive v-if="activeTab === 'live'" :asset-id="assetId" :refresh-tick="runRefreshTick" />
         <TabHistory v-else-if="activeTab === 'history'" :asset-id="assetId" />
         <TabReports v-else-if="activeTab === 'reports'" :asset-id="assetId" />

@@ -29,6 +29,7 @@ import { localizeConditionText } from '../copy'
 import ObsPanel from '../components/ObsPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
 import AckDialog from '../components/AckDialog.vue'
+import { buildBulkAckScope } from './alertScope'
 
 // column meta: mono-column flag (timestamps/durations render --font-mono).
 // TS augmentation on the module where ColumnMeta is DECLARED (table-core) —
@@ -166,30 +167,36 @@ const table = useVueTable<AlertRec>({
 const ackTarget = ref<AlertRec | null>(null)
 const bulkAssets = ref<string[] | undefined>(undefined)
 const bulkFleet = ref(false)
+const bulkSubject = ref<string | null>(null)
 const dialogOpen = computed(() => ackTarget.value !== null || !!bulkAssets.value || bulkFleet.value)
 
 function askAck(a: AlertRec): void {
   ackTarget.value = a
   bulkAssets.value = undefined
   bulkFleet.value = false
+  bulkSubject.value = null
 }
 function askBulkAsset(): void {
-  const ids = [...new Set(filtered.value.filter((a) => !a.acked).map((a) => a.asset_id))]
-  if (!ids.length) { toast('当前筛选下无未确认告警', 'warn'); return }
+  const scope = buildBulkAckScope(filtered.value, fSeverity.value)
+  if (!scope.assetIds.length) { toast('当前筛选下无未确认告警', 'warn'); return }
   ackTarget.value = null
-  bulkAssets.value = ids
+  bulkAssets.value = scope.assetIds
   bulkFleet.value = false
+  bulkSubject.value = scope.subject
 }
 function askBulkFleet(): void {
-  if (!rt.unackedAlerts.length) { toast('当前无未确认告警', 'warn'); return }
+  const scope = buildBulkAckScope(rt.unackedAlerts, fSeverity.value)
+  if (!scope.assetIds.length) { toast('当前筛选下无未确认告警', 'warn'); return }
   ackTarget.value = null
   bulkAssets.value = undefined
   bulkFleet.value = true
+  bulkSubject.value = scope.subject
 }
 function closeDialog(): void {
   ackTarget.value = null
   bulkAssets.value = undefined
   bulkFleet.value = false
+  bulkSubject.value = null
 }
 </script>
 
@@ -265,8 +272,10 @@ function closeDialog(): void {
     <ObsPanel title="告警记录" :meta="`${filtered.length} 条`">
       <EmptyState
         v-if="!filtered.length"
-        label="没有符合条件的告警"
-        hint="告警只对真实状态变化触发；计划停机与数据不足状态后端已豁免"
+        :label="rt.alertsPartialFailure ? '部分资产告警读取失败' : '没有符合条件的告警'"
+        :hint="rt.alertsPartialFailure
+          ? '部分资产的告警查询失败，当前列表可能不完整（可刷新重试）'
+          : '告警只对真实状态变化触发；计划停机与数据不足状态后端已豁免'"
       >
         <template #icon><BellRing :size="18" :stroke-width="1.5" /></template>
       </EmptyState>
@@ -342,7 +351,7 @@ function closeDialog(): void {
       :alert="ackTarget"
       :assets="bulkAssets"
       :fleet="bulkFleet"
-      :subject="fSeverity || undefined"
+      :subject="bulkSubject || undefined"
       @close="closeDialog"
     />
   </div>

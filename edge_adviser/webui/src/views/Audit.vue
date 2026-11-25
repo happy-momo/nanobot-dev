@@ -21,6 +21,7 @@ import { useRuntime } from '../stores/runtime'
 import { toast } from '../stores/toast'
 import ObsPanel from '../components/ObsPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
+import { createRequestSequence } from '../utils/requestSequence'
 
 const rt = useRuntime()
 
@@ -104,9 +105,9 @@ const okRate = computed<number | null>(() => {
 // ------------------------------------------------------------------ loads --
 // sequence guard: a slow response for asset A must never land in asset B's
 // ledger (watch(assetId) can fire while a previous request is in flight)
-let loadSeq = 0
+const loadSequence = createRequestSequence()
 async function load(): Promise<void> {
-  const mySeq = ++loadSeq
+  const mySeq = loadSequence.next()
   const asset = assetId.value
   if (!asset) return
   loading.value = true
@@ -116,37 +117,37 @@ async function load(): Promise<void> {
   total.value = null
   try {
     const d = await fetchRunlog(asset, undefined, 300)
-    if (mySeq !== loadSeq || asset !== assetId.value) return
+    if (!loadSequence.isCurrent(mySeq) || asset !== assetId.value) return
     rows.value = (d?.rows || []) as RunlogRow[]
     nextBefore.value = d?.next_before ?? null
     total.value = typeof d?.total === 'number' ? d.total : null
   } catch (e) {
-    if (mySeq !== loadSeq) return
+    if (!loadSequence.isCurrent(mySeq)) return
     // failed READ ≠ empty ledger: "no rows" and "can't read rows" mean
     // opposite things to an auditor (carried over from the old Runlog.vue)
     loadError.value = e instanceof Error ? e.message : '审计记录加载失败'
   } finally {
-    if (mySeq === loadSeq) loading.value = false
+    if (loadSequence.isCurrent(mySeq)) loading.value = false
   }
 }
 
 async function loadMore(): Promise<void> {
-  const mySeq = loadSeq
+  const mySeq = loadSequence.current()
   const asset = assetId.value
   if (!asset || !nextBefore.value || loadingMore.value) return
   loadingMore.value = true
   try {
     const d = await fetchRunlog(asset, Number(nextBefore.value), 300)
-    if (mySeq !== loadSeq || asset !== assetId.value) return
+    if (!loadSequence.isCurrent(mySeq) || asset !== assetId.value) return
     const older = (d?.rows || []) as RunlogRow[]
     rows.value = rows.value.concat(older)
     nextBefore.value = d?.next_before ?? null
   } catch (e) {
-    if (mySeq === loadSeq) {
+    if (loadSequence.isCurrent(mySeq)) {
       toast(e instanceof Error ? `加载更早记录失败：${e.message}` : '加载更早记录失败', 'crit')
     }
   } finally {
-    if (mySeq === loadSeq) loadingMore.value = false
+    if (loadSequence.isCurrent(mySeq)) loadingMore.value = false
   }
 }
 
@@ -292,7 +293,9 @@ const gapDays = computed<string[]>(() => {
         v-if="loadError"
         label="审计记录加载失败"
         :hint="loadError"
-      />
+      >
+        <button type="button" class="au-retry" @click="load()">重试</button>
+      </EmptyState>
 
       <EmptyState
         v-else-if="!loading && !rows.length"

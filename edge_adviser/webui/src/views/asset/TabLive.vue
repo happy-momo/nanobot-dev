@@ -27,6 +27,7 @@ import ObsPanel from '../../components/ObsPanel.vue'
 import MetricChart from '../../components/MetricChart.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import type { MetricSpecMeta } from '../../theme/meta'
+import { createRequestSequence } from '../../utils/requestSequence'
 
 const props = defineProps<{ assetId: string; refreshTick?: number }>()
 
@@ -109,20 +110,20 @@ function seriesOf(key: string): Array<{ ts: number; v: number }> {
 // operator switched to asset B, and a stale refetch must never clobber newer
 // live SSE points already merged into history (refresh-tick + asset-switch
 // both call loadHistory while the previous request may still be in flight)
-let loadSeq = 0
+const loadSequence = createRequestSequence()
 async function loadHistory() {
-  const mySeq = ++loadSeq
+  const mySeq = loadSequence.next()
   const asset = props.assetId
   if (!asset) return
   loading.value = true
   try {
     const rows = await fetchSnapshots(asset, 40, true)
-    if (mySeq !== loadSeq || asset !== props.assetId) return
+    if (!loadSequence.isCurrent(mySeq) || asset !== props.assetId) return
     history.value = Array.isArray(rows) ? rows : []
   } catch {
-    if (mySeq === loadSeq) toast('历史快照加载失败', 'warn')
+    if (loadSequence.isCurrent(mySeq)) toast('历史快照加载失败', 'warn')
   } finally {
-    if (mySeq === loadSeq) loading.value = false
+    if (loadSequence.isCurrent(mySeq)) loading.value = false
   }
 }
 
@@ -217,12 +218,12 @@ function fmtWindowEnd(value?: string): string {
 }
 
 async function loadReport() {
-  const mySeq = loadSeq
+  const mySeq = loadSequence.current()
   const asset = props.assetId
   report.value = null
   try {
     const doc = await fetchReport(asset, todayStr())
-    if (mySeq !== loadSeq || asset !== props.assetId) return
+    if (!loadSequence.isCurrent(mySeq) || asset !== props.assetId) return
     if (doc?.report_md) report.value = doc
   } catch {
     /* 静默隐藏 */
@@ -245,16 +246,16 @@ interface AlertRow {
 const alerts = ref<AlertRow[]>([])
 
 async function loadAlerts() {
-  const mySeq = loadSeq
+  const mySeq = loadSequence.current()
   const asset = props.assetId
   try {
     const rows = await fetchAlerts(asset, false)
-    if (mySeq !== loadSeq || asset !== props.assetId) return
+    if (!loadSequence.isCurrent(mySeq) || asset !== props.assetId) return
     alerts.value = (Array.isArray(rows) ? rows : []).sort((a, b) => (b.ts || 0) - (a.ts || 0))
   } catch {
     // failed read must not render as "无活跃告警": keep prior rows on asset
     // switch, or surface an empty-but-failed state via toast on cold load
-    if (mySeq !== loadSeq || asset !== props.assetId) return
+    if (!loadSequence.isCurrent(mySeq) || asset !== props.assetId) return
     if (alerts.value.length) {
       toast('活跃告警刷新失败，显示的可能是过期数据', 'warn')
     } else {

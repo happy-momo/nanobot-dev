@@ -16,7 +16,6 @@ one, or a 0.2 s gate refusal from a 6-minute model call.
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -62,13 +61,3 @@ def log_run_event(
 def read_runlog(store: AssetStore, asset_id: str, limit: int = 100) -> list[dict[str, Any]]:
     """Return the most recent ``limit`` runlog entries for an asset."""
     return store.read_runlog(asset_id, limit=limit)
-
-
-class _Timer:
-    """Context helper capturing elapsed wall time for an audited action."""
-
-    def __init__(self) -> None:
-        self.started = time.time()
-
-    def elapsed(self) -> float:
-        return round(time.time() - self.started, 3)

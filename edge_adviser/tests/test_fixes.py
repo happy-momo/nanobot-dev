@@ -337,3 +337,46 @@ def test_serve_mode_ingests_alerts(tmp_path: Path) -> None:
              "state_reason": "", "headline": "", "window_end": now.isoformat(timespec="seconds")}
     assert not ingest_alert(sink, "pump1", snap2)
     assert len(rows) == 1
+
+
+# --------------------------------------------------------------------------- #
+#  0.5.2: scheduler start() isolates a bad source instead of dying
+# --------------------------------------------------------------------------- #
+def test_scheduler_start_isolates_bad_source(tmp_path: Path) -> None:
+    """A ValueError from a bad connector config must not kill supervisor.start()."""
+    import asyncio
+    from edge_adviser.config.loader import load_config
+    from edge_adviser.core.asset_store import AssetStore
+    from edge_adviser.core.scheduler import Supervisor
+
+    cfg = {"workspace": str(tmp_path / "ws"),
+           "assets": [{"asset_id": "bad1", "name": "b", "window_s": 60},
+                      {"asset_id": "ok1", "name": "o", "window_s": 60}],
+           "sources": [
+               {"kind": "mqtt", "asset_id": "bad1", "url": "not-a-url", "topic": "x"},
+               {"kind": "simulator", "asset_id": "ok1"}]}
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(cfg), encoding="utf-8")
+    c = load_config(p)
+
+    class Gw:
+        async def astart(self): pass
+        async def aclose(self): pass
+        async def run(self, *a, **k):
+            from edge_adviser.llm.gateway import LLMResult
+            return LLMResult(content="ok", used_provider="stub", degraded=False)
+
+    from edge_adviser.report.generator import ReportGenerator
+    from edge_adviser.learn.learner import Learner
+    store = AssetStore(c.workspace)
+    sup = Supervisor(config=c, store=store, gateway=Gw(),
+                     report_gen=ReportGenerator(c, store, Gw()),
+                     learner=Learner(c, store, Gw()))
+    asyncio.run(sup.start())  # must NOT raise
+    try:
+        assert "ok1" in sup._sources, "healthy asset must still be wired"
+        assert "bad1" not in sup._sources, "bad asset must be isolated"
+        rows = store.read_runlog("bad1", limit=5)
+        assert any(r.get("reason", "").startswith("source_failed") for r in rows)
+    finally:
+        asyncio.run(sup.stop())

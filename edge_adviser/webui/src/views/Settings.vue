@@ -24,8 +24,10 @@ const stats = ref<Record<string, any> | null>(null)
 const config = ref<Record<string, any> | null>(null)
 const loadError = ref('')
 const loading = ref(false)
+let loadSeq = 0
 
 async function load(): Promise<void> {
+  const mySeq = ++loadSeq
   loading.value = true
   loadError.value = ''
   try {
@@ -33,14 +35,16 @@ async function load(): Promise<void> {
     const [v, h, s, c] = await Promise.all([
       fetchVersion(), fetchHealth(), fetchStats().catch(() => null), fetchConfig(),
     ])
+    if (mySeq !== loadSeq) return
     version.value = v || null
     health.value = h || null
     stats.value = s || null
     config.value = c || null
   } catch (e) {
+    if (mySeq !== loadSeq) return
     loadError.value = e instanceof Error ? e.message : '设置信息加载失败'
   } finally {
-    loading.value = false
+    if (mySeq === loadSeq) loading.value = false
   }
 }
 
@@ -101,7 +105,11 @@ const PARAM_ROWS = computed(() => [
       演示环境 · 使用模拟数据，不代表真实设备状态
     </div>
 
-    <EmptyState v-if="loadError" label="设置信息加载失败" :hint="loadError" />
+    <EmptyState v-if="loadError" label="设置信息加载失败" :hint="loadError">
+      <button type="button" :disabled="loading" @click="load">
+        {{ loading ? '重试中…' : '重试' }}
+      </button>
+    </EmptyState>
 
     <div v-else class="st-grid">
       <ConfigurationManager />

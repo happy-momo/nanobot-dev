@@ -591,6 +591,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: edge_adviser/webui/package-lock.json
+
+      - name: Install EdgeAdviser WebUI dependencies
+        working-directory: edge_adviser/webui
+        run: npm ci --no-audit --no-fund
+
+      - name: Run EdgeAdviser WebUI tests
+        working-directory: edge_adviser/webui
+        run: npm test
+
+      - name: Typecheck and build EdgeAdviser WebUI
+        working-directory: edge_adviser/webui
+        run: npm run build
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:

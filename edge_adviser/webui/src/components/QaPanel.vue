@@ -116,7 +116,10 @@ function trustColor(trust: string): string {
 /** message wall-clock "x 分钟前" — mono suffix on every bubble */
 function ago(ts?: number): string {
   if (!ts) return ''
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000))
+  // consume the store's 1s reactive clock so ages tick (bare Date.now() would
+  // freeze until some other reactive dep happens to re-render this row)
+  void rt.nowSec
+  const s = Math.max(0, Math.round((rt.nowSec * 1000 - ts) / 1000))
   if (s < 60) return '刚刚'
   if (s < 3600) return `${Math.round(s / 60)} 分钟前`
   return `${Math.round(s / 3600)} 小时前`

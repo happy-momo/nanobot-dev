@@ -13,7 +13,7 @@
 services:
   edge-adviser:
     build:
-      context: ..
+      context: ../..
       dockerfile: edge_adviser/Dockerfile
     image: edge-adviser:latest
     container_name: edge-adviser
@@ -26,7 +26,10 @@ services:
     environment:
       # workspace override: keeps all state on the mounted volume regardless
       # of what config.json says
-      - EDGE_ADVISER_WORKSPACE=/data
+      EDGE_ADVISER_WORKSPACE: /data
+      # Required when the HMI stores connector credentials; inject from the
+      # deployment environment rather than committing the Fernet key.
+      EDGE_ADVISER_CREDENTIAL_KEY: ${EDGE_ADVISER_CREDENTIAL_KEY:-}
       # optional: point the online provider at an intranet gateway without
       # touching the config file
       # - HTTPS_PROXY=http://proxy.plant.local:3128

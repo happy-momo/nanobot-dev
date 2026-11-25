@@ -37,10 +37,7 @@ WORKDIR /app
 # edits; nanobot-ai pulls the SDK, the rest are edge_adviser's direct deps.
 COPY edge_adviser/pyproject.toml ./edge_adviser/pyproject.toml
 COPY edge_adviser/edge_adviser ./edge_adviser/edge_adviser
-RUN pip install --no-deps ./edge_adviser && pip install \
-    "nanobot-ai>=0.4.0" "numpy>=1.26" "fastapi>=0.110" \
-    "uvicorn[standard]>=0.29" "sse-starlette>=2.0" \
-    "loguru>=0.7" "aiohttp>=3.9"
+RUN pip install ./edge_adviser
 
 # Static HMI bundle from stage 1 — served by FastAPI at "/".
 COPY --from=webui-build /build/dist ./edge_adviser/webui/dist

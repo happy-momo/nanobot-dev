@@ -3,11 +3,14 @@
 // mono age of the last data event when one has arrived. No blinking: spec §1.4
 // allows exactly four animations site-wide, so state changes are color-only.
 import { computed } from 'vue'
+import { useRuntime } from '../stores/runtime'
 
 const props = withDefaults(
   defineProps<{ conn: 'online' | 'reconnecting' | 'connecting'; lastEventAt?: number }>(),
   { lastEventAt: undefined },
 )
+
+const rt = useRuntime()
 
 const LABEL: Record<'online' | 'reconnecting' | 'connecting', string> = {
   online: '实时',
@@ -17,9 +20,12 @@ const LABEL: Record<'online' | 'reconnecting' | 'connecting', string> = {
 
 const label = computed(() => LABEL[props.conn])
 
+// consume the store's 1s reactive clock, not bare Date.now() — the age text
+// must tick every second, not freeze until some other dep happens to change
 const ageS = computed(() => {
   if (!props.lastEventAt) return null
-  return Math.max(0, Math.floor((Date.now() - props.lastEventAt) / 1000))
+  void rt.nowSec // reactive dependency: recomputes on each clock tick
+  return Math.max(0, Math.floor((rt.nowSec * 1000 - props.lastEventAt) / 1000))
 })
 
 const ageText = computed(() => {
