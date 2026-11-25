@@ -1,15 +1,16 @@
-<!-- PLACEHOLDER (Task 4 step 1): route target for /qa — the FULL-SCREEN mode of
-     the QA drawer's QaPanel (spec §5.4: 抽屉与全屏页共用组件 QaPanel).
-     Task 8 fills this in; the QA drawer itself is hosted by App.vue. -->
 <script setup lang="ts">
+// /qa — fullscreen QA (spec §5.4: the same QaPanel the drawer hosts, laid out
+// full-width). No assetId prop → QaPanel shows its Reka Select asset picker.
+import QaPanel from '../components/QaPanel.vue'
 </script>
 
 <template>
-  <div class="stub">
-    <span class="eyebrow">QA — TASK 8 接入</span>
+  <div class="page qa-page">
+    <QaPanel fullscreen />
   </div>
 </template>
 
 <style scoped>
-.stub { display: flex; align-items: center; justify-content: center; padding: 60px 0; }
+.qa-page { display: flex; flex-direction: column; min-height: 0; flex: 1;
+  padding: 16px 18px; overflow: hidden auto; }
 </style>

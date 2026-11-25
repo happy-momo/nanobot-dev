@@ -10,6 +10,7 @@ import { DialogPortal, DialogRoot, DialogContent, DialogOverlay, DialogTitle,
   DialogDescription, DialogClose } from 'reka-ui'
 import { X } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import QaPanel from './QaPanel.vue'
 
 const props = defineProps<{ open: boolean; assetId?: string }>()
 
@@ -77,12 +78,7 @@ onBeforeUnmount(() => window.clearTimeout(exitTimer))
         </header>
 
         <div class="qd-body">
-          <div class="qd-empty">
-            <span class="eyebrow">问答（Task 8 接入）</span>
-            <span class="qd-empty-hint">QaPanel 就位后此处渲染对话流与输入行。</span>
-          </div>
-          <!-- Task 8 mounts QaPanel here -->
-          <slot />
+          <QaPanel :asset-id="props.assetId" />
         </div>
       </DialogContent>
     </DialogPortal>
