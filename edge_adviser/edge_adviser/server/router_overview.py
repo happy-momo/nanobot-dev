@@ -162,11 +162,17 @@ async def version(request: Request) -> Any:
     except PackageNotFoundError:
         from .. import __version__ as ver  # fallback: repo checkout
     state: AppState = await _state(request)
+    # PIN brute-force observability: cumulative wrong attempts + current
+    # lockout. PinRateLimiter is set by create_app; getattr keeps tests that
+    # build state directly working.
+    limiter = getattr(state, "pin_limiter", None)
     return ok(data={
         "service": "edge-adviser-hmi",
         "version": ver,
         "demo": state.config.demo,
         "pin_enabled": state.config.hmi_pin != "none",
+        "pin_failed_attempts": getattr(limiter, "total_failures", 0),
+        "pin_lockout_s": int(limiter.locked()) if limiter else 0,
         "assets": sum(1 for a in state.config.assets if a.enabled),
         "monitor_interval_s": state.config.monitor_interval_s,
     })

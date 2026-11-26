@@ -78,6 +78,9 @@ class PinRateLimiter:
         self.lockout_s = lockout_s
         self._failures: list[float] = []
         self._locked_until = 0.0
+        # process-lifetime total — the sliding window clears and the lockout
+        # expires, but the brute-force evidence stays visible in /api/version
+        self.total_failures = 0
 
     def locked(self, now: float | None = None) -> float:
         """Seconds remaining in lockout, 0 if not locked."""
@@ -86,6 +89,7 @@ class PinRateLimiter:
 
     def record_failure(self, now: float | None = None) -> None:
         now = now if now is not None else time.time()
+        self.total_failures += 1
         cutoff = now - self.window_s
         self._failures = [t for t in self._failures if t >= cutoff]
         self._failures.append(now)

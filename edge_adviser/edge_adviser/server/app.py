@@ -138,6 +138,9 @@ def create_app(config_path: str | Path, gateway: Any | None = None,
     # brute-force guard for the PIN exchange (a shared 4-6 digit PIN on 0.0.0.0
     # is otherwise guessable without bound)
     pin_limiter = PinRateLimiter()
+    # expose on state so /api/version can carry the brute-force observability
+    # counters (an operator should SEE the attempts, not just suffer lockouts)
+    state.pin_limiter = pin_limiter
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -165,6 +168,12 @@ def create_app(config_path: str | Path, gateway: Any | None = None,
 
     app = FastAPI(title="EdgeAdviser HMI", lifespan=lifespan)
     app.state.edge = state
+
+    # Optional Host-header allowlist ([] = disabled; the LAN is the boundary).
+    if state.config.trusted_hosts:
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+        app.add_middleware(TrustedHostMiddleware,
+                           allowed_hosts=state.config.trusted_hosts)
 
     # --- optional shared PIN gate ---------------------------------------
     def check_auth(auth_value: str | None) -> JSONResponse | None:

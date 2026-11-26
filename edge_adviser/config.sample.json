@@ -16,6 +16,7 @@
   "memory_decay_s": 7776000,
   "runlog_enabled": true,
   "hmi_pin": "none",
+  "trusted_hosts": [],
   "hmi_host": "0.0.0.0",
   "hmi_port": 8000,
   "providers": {

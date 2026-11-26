@@ -270,6 +270,12 @@ class AdviserConfig:
     # Any other string enables a shared-pin gate: the UI exchanges it for a
     # short-lived HMAC token via POST /api/auth/pin.
     hmi_pin: str = "none"
+    # Host-header allowlist (FastAPI TrustedHostMiddleware). Empty list (the
+    # default) disables the check entirely — today's behavior, the LAN is the
+    # boundary. Entries are BARE hostnames (starlette strips the request port
+    # before matching): ["adviser.plant.local"] behind a reverse proxy so a
+    # forged Host header cannot smuggle cache poisoning or password resets.
+    trusted_hosts: list[str] = field(default_factory=list)
     # Web server bind config for the built-in `edge-adviser serve --web` mode.
     hmi_host: str = "0.0.0.0"
     hmi_port: int = 8000
