@@ -198,6 +198,40 @@ def _find_config_file(state: AppState) -> Path | None:
     return None
 
 
+_CONFIG_BACKUP_KEEP = 5
+
+
+def _backup_config(cfg_path: Path) -> Path | None:
+    """Copy the config aside before an HMI write mutates it.
+
+    The threshold PATCH is the one endpoint that writes the live config file;
+    a bad band edited at midnight must be one `cp` away from recovery. Keeps
+    the newest 5 timestamped copies next to the config (same directory, no
+    hidden dotfiles — an operator greps for *.bak- without docs).
+    """
+    import shutil
+    import uuid as _uuid
+    from datetime import datetime
+    if not cfg_path.is_file():
+        return None
+    # second-granularity stamp + short uuid: two edits in the same second must
+    # not overwrite each other's recovery point
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    bak = cfg_path.with_name(f"{cfg_path.name}.bak-{stamp}-{_uuid.uuid4().hex[:6]}")
+    try:
+        shutil.copy2(cfg_path, bak)
+    except OSError:
+        return None
+    # prune to the newest _CONFIG_BACKUP_KEEP copies (name sorts by timestamp)
+    baks = sorted(cfg_path.parent.glob(f"{cfg_path.name}.bak-*"))
+    for old in baks[:-_CONFIG_BACKUP_KEEP]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return bak
+
+
 @router.patch("/assets/{asset_id}/metrics/{key}/thresholds")
 async def patch_thresholds(request: Request, asset_id: str, key: str,
                            body: ThresholdIn) -> Any:
@@ -265,6 +299,15 @@ async def patch_thresholds(request: Request, asset_id: str, key: str,
         return fail("metric not found in config file")
 
     changes: dict[str, list[Any]] = {}
+    # guardrail 2: type fidelity — an int input (68) must not drift to 68.0;
+    # json.dumps would otherwise rewrite every future diff as a type change
+    def _typed(name: str, v: float) -> float:
+        old = mrec.get(name)
+        if isinstance(old, int) and not isinstance(old, bool) \
+                and float(v).is_integer():
+            return int(v)
+        return v
+
     for name, v in vals.items():
         if v is None:
             continue
@@ -272,10 +315,14 @@ async def patch_thresholds(request: Request, asset_id: str, key: str,
         if old == v:
             continue
         changes[name] = [old, v]
-        mrec[name] = v
+        mrec[name] = _typed(name, v)
 
     if not changes:
         return ok(data={"changed": {}, "metric": metric_to_dict(metric)})
+
+    # guardrail 1: snapshot the config aside before the write lands (only when
+    # something actually changes — a no-op edit must not churn backups)
+    _backup_config(cfg_path)
 
     # atomic write: tmp + os.replace — a crash mid-write must not lose the config
     tmp = cfg_path.with_suffix(".json.tmp")
@@ -286,7 +333,7 @@ async def patch_thresholds(request: Request, asset_id: str, key: str,
     # apply to the in-memory spec so the running process picks it up immediately
     for name, v in vals.items():
         if v is not None:
-            setattr(metric, name, v)
+            setattr(metric, name, _typed(name, v))
 
     from ..core.runlog import log_run_event
     log_run_event(state.store, asset_id, "threshold_edit", "ok", actor="hmi",
