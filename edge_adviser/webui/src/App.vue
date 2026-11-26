@@ -231,6 +231,8 @@ function onNavigate(name: string) {
 
 /* narrow: the rail becomes a bottom tab bar (AppRail's media query restyles
    itself; here we only stack the shell vertically) */
+/* breakpoint: tablet→stack (project-wide 899.98px; phone grid = 699.98px,
+   detail-tab side rail = 1099.98px; do not invent new widths) */
 @media (max-width: 899.98px) {
   .shell { flex-direction: column; }
   .content { padding: 14px 12px 20px; }
