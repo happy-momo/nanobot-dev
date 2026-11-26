@@ -273,6 +273,13 @@ class _task:
         await self.state.bus.publish(KIND_TASK, self.asset_id,
                                      payload={"token": self.token, "kind": self.kind,
                                               "phase": "start"})
+        # journal the in-flight task so a restart can answer for it (the
+        # client's SSE watchdog would otherwise blame the provider). Defensive
+        # access: minimal test stand-ins without a journal stay functional.
+        journal = getattr(self.state, "task_journal", None)
+        if journal is not None:
+            journal.append({"token": self.token, "kind": self.kind,
+                            "asset_id": self.asset_id, "status": "running"})
         return self
 
     def mark_failed(self, error: str = "") -> None:
@@ -296,3 +303,24 @@ class _task:
             # unactionable for the operator and unanswerable in an audit
             payload["error"] = self.error
         await self.state.bus.publish(KIND_TASK, self.asset_id, payload=payload)
+        # terminal journal row: the startup replay must see this token closed
+        journal = getattr(self.state, "task_journal", None)
+        if journal is not None:
+            journal.append({"token": self.token, "kind": self.kind,
+                            "asset_id": self.asset_id, "status": phase,
+                            "error": payload.get("error", "")})
+
+async def recover_pending_tasks(state: AppState) -> int:
+    """Startup: journal entries still `running` from a previous process get an
+    honest terminal failed event — the client's watchdog would otherwise blame
+    the provider for an operator-side restart. Returns the recovered count."""
+    journal = state.task_journal
+    pending = journal.open_tasks()
+    for rec in pending:
+        await state.bus.publish(
+            KIND_TASK, rec.get("asset_id", ""),
+            payload={"token": rec["token"], "kind": rec.get("kind", ""),
+                     "phase": "failed",
+                     "error": "服务器在任务完成前重启，结果未知；请重新触发"})
+    journal.mark_recovered([r["token"] for r in pending])
+    return len(pending)

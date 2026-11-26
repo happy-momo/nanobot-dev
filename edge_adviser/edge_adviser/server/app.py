@@ -142,6 +142,11 @@ def create_app(config_path: str | Path, gateway: Any | None = None,
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await state.start()
+        # Journal recovery: tasks left `running` by a previous process get an
+        # honest terminal failed event on the bus BEFORE the scheduler starts
+        # (so replay subscribers see the closure, not a phantom in-flight task).
+        from .router_actions import recover_pending_tasks
+        await recover_pending_tasks(state)
         # Demo mode: seed a rich workspace (snapshots/reports/alerts/audit) so
         # every page has data on first load, before the scheduler starts writing.
         if state.config.demo:

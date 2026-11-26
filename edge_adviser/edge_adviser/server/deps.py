@@ -23,6 +23,7 @@ from ..core.asset_store import AssetStore
 from ..core.bus import EventBus
 from ..core.credential_vault import CredentialVault
 from ..core.scheduler import Supervisor
+from ..core.task_journal import TaskJournal
 from ..learn import FeedbackService
 from ..learn.learner import Learner
 from ..llm.context import ContextBuilder
@@ -38,6 +39,7 @@ class AppState:
         self.config = config
         self.store = store
         self.configuration_lock = asyncio.Lock()
+        self.task_journal = TaskJournal(store.workspace)
         self.credential_vault = CredentialVault(
             store.workspace / ".connector_credentials.enc",
             os.environ.get("EDGE_ADVISER_CREDENTIAL_KEY"),
