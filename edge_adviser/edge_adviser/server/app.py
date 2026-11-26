@@ -243,6 +243,8 @@ def create_app(config_path: str | Path, gateway: Any | None = None,
     app.include_router(stats_router)
     from .router_configuration import router as configuration_router
     app.include_router(configuration_router)
+    from .router_metrics import router as metrics_router
+    app.include_router(metrics_router)
 
     if state.config.demo and not pin_enabled:
         # Demo mode ships with hmi_pin="none" — every write endpoint would be

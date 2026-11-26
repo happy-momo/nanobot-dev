@@ -104,6 +104,10 @@ class EventBus:
     async def aclose(self) -> None:
         self._watchers.clear()
 
+    def watcher_count(self) -> int:
+        """Active subscriptions — the SSE stream gauge in /metrics reads this."""
+        return len(self._watchers)
+
     def snapshot_replay(self) -> list[dict[str, Any]]:
         """Return the most recent event per (asset_id, kind) for ad-hoc joins."""
         return list(self._last.values())
