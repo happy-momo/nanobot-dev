@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 
 from .deps import AppState
 from .schemas import fail, ok
@@ -76,3 +76,19 @@ async def download_report_json(request: Request, asset_id: str, date: str) -> An
         "meta": r.get("meta"), "snapshot": r.get("snapshot"),
         "degraded": r.get("degraded"), "provider": r.get("provider"),
     })
+
+
+@router.get("/assets/{asset_id}/reports/{date}/download.html")
+async def download_report_html(request: Request, asset_id: str, date: str) -> Any:
+    """Standalone HTML export — offline handoff / print, no app shell needed."""
+    state: AppState = await _state(request)
+    r = state.store.read_report(asset_id, date)
+    if r is None or not r.get("report_md"):
+        return fail("report not found", status=404)
+    from ..report.html_export import render_report_html
+    body = render_report_html(
+        r["report_md"], r.get("meta"), asset_id=asset_id, date=date,
+        provider=r.get("provider") or "", degraded=bool(r.get("degraded")))
+    return Response(body, media_type="text/html; charset=utf-8",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="{asset_id}-{date}.html"'})

@@ -224,8 +224,9 @@ export const sendFeedback = (id: string, note: string) =>
 
 // ---- downloads / task streams ---- //
 
-/** Authenticated report download (bearer token rides the fetch headers). */
-export const downloadReport = (id: string, date: string, kind: 'md' | 'json') =>
+/** Authenticated report download (bearer token rides the fetch headers).
+ *  'html' is the standalone print/handoff export (stdlib-rendered backend). */
+export const downloadReport = (id: string, date: string, kind: 'md' | 'json' | 'html') =>
   downloadFile(`/api/assets/${id}/reports/${date}/download.${kind}`,
     `${id}_${date}.${kind}`)
 

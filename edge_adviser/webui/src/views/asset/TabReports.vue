@@ -100,9 +100,9 @@ async function open(date: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------- downloads --
-const downloading = ref<'md' | 'json' | null>(null)
+const downloading = ref<'md' | 'json' | 'html' | null>(null)
 
-async function download(kind: 'md' | 'json'): Promise<void> {
+async function download(kind: 'md' | 'json' | 'html'): Promise<void> {
   if (!selectedDate.value || downloading.value) return
   downloading.value = kind
   try {
@@ -208,6 +208,15 @@ watch(() => props.assetId, (v, o) => {
           >
             <Download :size="13" :stroke-width="1.5" />
             <span>{{ downloading === 'json' ? '下载中…' : '下载 .json' }}</span>
+          </button>
+          <button
+            type="button"
+            class="tr-btn"
+            :disabled="!selectedDate || downloading !== null"
+            @click="download('html')"
+          >
+            <Download :size="13" :stroke-width="1.5" />
+            <span>{{ downloading === 'html' ? '下载中…' : '下载 .html' }}</span>
           </button>
         </div>
       </div>
