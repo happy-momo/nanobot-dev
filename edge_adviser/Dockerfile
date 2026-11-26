@@ -8,6 +8,11 @@
 # Build (from repo root):
 #   docker build -f edge_adviser/Dockerfile -t edge-adviser:latest .
 #
+# Multi-arch: this build is amd64+arm64 clean (all pip deps publish aarch64
+# wheels; node/python base images are multi-arch). CI builds both platforms
+# via buildx+QEMU — see .github/workflows/edge-image.yml. There is deliberately
+# no apt package in the runtime stage, so no dpkg arch branching is needed.
+#
 # Run:
 #   docker run -d --name edge-adviser \
 #     -p 8000:8000 \

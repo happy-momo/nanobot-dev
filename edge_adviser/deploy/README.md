@@ -74,3 +74,45 @@ journalctl -u edge-adviser -f          # 跟日志
 - OPC UA：用部署证书和实际账号验证安全模式、服务端信任链、客户端证书/私钥、NodeId、节点状态码及源时间戳；保存后确认周期读取，重启后再次验证连接。
 - Modbus TCP：在目标隔离网络验证 Unit ID、功能区、零基地址、数据类型、字序、缩放和偏移；将读数与设备工程值对照，并确认连续采集和超时/断线后的状态变化。
 - 对所有启用凭据的连接器，验证凭据在服务重启后仍可使用，并确认配置 API 响应、日志和删除备份不包含凭据值；确认部署密钥可用且已通过运维密钥管理方式备份。
+
+## 7. TLS 终止（生产必须）
+
+edge-adviser 服务明文 HTTP，安全模型默认"局域网可信 + PIN bearer"。跨网段或
+任何不受控链路访问时，必须在前面加 TLS 终止。最小 Caddy 示例（自动证书）：
+
+```caddyfile
+adviser.plant.local {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+nginx 等价物：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name adviser.plant.local;
+    ssl_certificate     /etc/nginx/certs/adviser.crt;
+    ssl_certificate_key /etc/nginx/certs/adviser.key;
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 3600s;   # SSE 长连接：/stream/* 不能被默认 60s 截断
+        proxy_buffering off;        # SSE 逐事件下发，缓冲会攒批
+    }
+}
+```
+
+两个必须项：`proxy_read_timeout`（SSE 心跳 25s 一次，但 EventSource 重连前的
+读超时要大于任务 600s 上限才有意义）与 `proxy_buffering off`（否则告警/任务
+事件被攒成一大块下发，HMI 的"实时"变"延时回放"）。如需按主机名收敛访问面，
+可在配置中设置 `trusted_hosts`（裸主机名匹配，如 `"plant.local"`，不含端口）。
+
+## 访问令牌的日志取舍
+
+PIN 模式下 EventSource 无法携带 Authorization 头，`/stream/*` 订阅走
+`?token=<hmac>` 查询参数。查询参数会进入反代访问日志——这是已知的取舍：
+令牌 12h 过期、HMAC 签名不可伪造、且只应出现在受控的运维日志里。若日志
+外发第三方聚合，请在反代层剥离 query（nginx: `log_format` 里用
+`$request_method $uri` 替代 `$request`）。

@@ -4,6 +4,31 @@
 
 ---
 
+## 0.6.0 — 2026-11-26（演进包：部署硬化 + 任务持久化 + 可观测性 + 导出）
+
+P0→P2 演进计划落地（计划文档 `docs/specs/2026-11-26-edge-adviser-0.6.0-evolution-plan.md`）。后端测试 194 → **221**，前端 4 → **12**。
+
+### P0 — 部署与运行硬化
+
+- **多架构镜像 CI**（`.github/workflows/edge-image.yml` 新增）：buildx + QEMU 构建 `linux/amd64,linux/arm64` 双平台镜像，v* tag push 推送 GHCR（workflow_dispatch 仅构建验证）。Dockerfile 加多架构说明注释——pip 依赖全部有 aarch64 轮子，运行层无 apt 包，无需 dpkg 分支。
+- **任务令牌落盘**（`core/task_journal.py` 新增）：report/learn 任务令牌追加写入 `.tasks.jsonl`；服务重启时未终结任务补发诚实失败事件（"服务器在任务完成前重启，结果未知；请重新触发"）——此前重启后 HMI 的任务进度永远悬在"运行中"。
+- **配置 PATCH 护栏**（`router_assets.py`）：阈值在线编辑写盘前自动备份（`config.json.bak-<时间戳>-<uuid>`，保留最近 5 份）；int 阈值写回保持 int 类型（此前 30 → 30.0，下游整型比较受扰）；noop 编辑不产生备份与审计行。
+
+### P1 — 安全与文档
+
+- **PIN 暴力尝试可观测**：`/api/version` 暴露 `pin_failed_attempts`（累计失败计数，不受滑动窗口过期影响）与 `pin_lockout_s`（当前剩余锁定秒数）——运维可从设置页确认是否正被爆破。
+- **TrustedHost 门禁**（可选）：配置 `trusted_hosts` 后按 Host 头拒绝陌生主机（400）。starlette 会剥离端口，模式须为裸主机名（`"plant.local"` 而非 `"plant.local:8000"`）。空列表 = 不启用（默认，向后兼容）。
+- **TLS/反代文档**（deploy/README.md 新增 §7）：Caddy 自动证书最小示例 + nginx 等价物，强调 SSE 两个必须项（`proxy_read_timeout 3600s`、`proxy_buffering off`）；文档化 `?token=` 查询参数进访问日志的取舍与日志剥离方法。
+
+### P2 — 可观测性与导出
+
+- **`/api/metrics` Prometheus 端点**：stdlib 文本暴露（快照数/审计行/provider 成败/gated/未确认告警/tick 心跳年龄/SSE 订阅数/PIN 失败计数），`text/plain; version=0.0.4`。挂 `/api` 前缀继承 PIN 门禁，抓取器需带 token 或在受控网段。零新依赖。
+- **HTML 报告导出**：`GET /api/assets/{id}/reports/{date}.html`——stdlib 渲染器（markdown 子集 + `html.escape` 全量转义，无 markdown 库依赖）生成独立 HTML 文件（内联 CSS、含 DATA-SCOPE 溯源徽章与降级标记），下载端点随 Content-Disposition 附件下发；webui 报告页新增 `.html` 下载按钮。
+- **知识账本 schema 统一**：claim/conflict 记录统一为单一拼写（`created_at/heading/text/source_window/status` / `created_at/old/new`），demo seed 直接写 v2，API 层经 `core/ledger_migrate.py` 归一化历史 v1 行（就地 tmp+replace 迁移）；前端删除双拼写兼容。
+- **前端 fmt 助手抽取**：`src/utils/fmt.ts` 收纳 fmtBytes/fmtS/fmtPct/fmtTs/fmtIso（非有限值一律 '—'），Settings/AckDialog 改用共享实现；`MarkdownView` 改用实例级 `new Marked({gfm, breaks})`（模块级单例 + setOptions 的全局可变性隐患）；14 个文件补断点语义注释（项目统一 899.98/699.98/1099.98px 断点约定）。
+
+---
+
 ## 0.5.2 — 2026-11-26（运行可靠性与 WebUI 可恢复性）
 
 - 后台报告与学习任务加入超时，任务 SSE 明确区分失败与超时并透传可操作原因；同一资产的调度、手动采集、报告和学习串行执行。

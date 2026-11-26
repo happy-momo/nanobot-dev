@@ -1,0 +1,50 @@
+name: EdgeAdviser image
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+    paths: ["edge_adviser/**"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  multiarch:
+    name: build amd64+arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/edge-adviser
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: edge_adviser/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          # workflow_dispatch builds without pushing (a validation run); only a
+          # real v* tag push lands the manifest list on GHCR.
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

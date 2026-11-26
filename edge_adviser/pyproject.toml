@@ -1,6 +1,6 @@
 [project]
 name = "edge-adviser"
-version = "0.5.2"
+version = "0.6.0"
 description = "Edge-deployed equipment intelligence agent built on nanobot."
 requires-python = ">=3.11"
 dependencies = [
