@@ -258,15 +258,20 @@ def _seed_memory(state: AppState, asset: AssetSpec) -> None:
     claims_path = state.store.asset_dir(asset.asset_id) / "memory_claims.jsonl"
     conflicts_path = state.store.asset_dir(asset.asset_id) / "memory_conflicts.jsonl"
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # v2 ledger spelling — the SAME shape MemoryService.record_claims writes
+    # (0.6.0 schema unification): the HMI reads one shape, not two.
     claims = [
-        {"id": "c1", "claim": "振动均值稳定在 2.8~3.2 区间", "ts": now_iso,
-         "status": "active", "source": "learn"},
-        {"id": "c2", "claim": "联轴器对中后振动应低于 2.5", "ts": now_iso,
-         "status": "stale", "source": "feedback"},
+        {"id": "c1", "heading": "振动均值稳定在 2.8~3.2 区间",
+         "text": "振动均值稳定在 2.8~3.2 区间",
+         "created_at": now_iso, "source_window": "learn", "status": "active"},
+        {"id": "c2", "heading": "联轴器对中后振动应低于 2.5",
+         "text": "联轴器对中后振动应低于 2.5",
+         "created_at": now_iso, "source_window": "feedback", "status": "stale"},
     ]
     conflicts = [
-        {"id": "f1", "claim_id": "c2", "reason": "当前振动均值高于该声明值",
-         "ts": now_iso, "status": "open"},
+        {"id": "f1", "heading": "联轴器对中后振动应低于 2.5",
+         "old": "c2", "new": "当前振动均值高于该声明值",
+         "created_at": now_iso},
     ]
     for path, rows in ((claims_path, claims), (conflicts_path, conflicts)):
         path.parent.mkdir(parents=True, exist_ok=True)

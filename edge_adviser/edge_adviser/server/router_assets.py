@@ -14,6 +14,7 @@ from fastapi import Request
 from pydantic import BaseModel
 
 from ..analytics.gates import gate_snapshot_for_read
+from ..core.ledger_migrate import normalize_records
 from .deps import AppState
 from .schemas import asset_to_dict, fail, metric_to_dict, ok, source_to_dict
 
@@ -149,6 +150,9 @@ async def knowledge(request: Request, asset_id: str) -> Any:
                 if line:
                     import json
                     rec = json.loads(line)
+                    # legacy v1 rows (demo seed pre-0.6.0) are normalized at
+                    # the boundary so the HMI reads one spelling
+                    rec = normalize_records([rec], cls=cls)[0]
                     rec.setdefault("cls", cls)
                     (claims if cls == "claim" else conflicts).append(rec)
         except Exception:  # noqa: BLE001

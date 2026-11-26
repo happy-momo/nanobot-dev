@@ -21,31 +21,25 @@ import TaskProgress from '../../components/TaskProgress.vue'
 const props = defineProps<{ assetId: string }>()
 
 // ------------------------------------------------------------------ shapes --
-// Ledger records come from TWO producers with different field spellings:
-// the demo seed (memory_claims/conflicts.jsonl: ts/reason/claim_id/claim/
-// source) and the production MemoryService.record_claims/_check_conflicts
-// (memory_service.py: created_at/heading/text/old/new). Read BOTH — a
-// one-spelling interface guts the honesty surface against the other writer.
+// Ledger records come from ONE producer spelling (v2, memory_service.py):
+// claim = {id, heading, text, created_at, source_window, status}
+// conflict = {id, heading, old, new, created_at}. The demo seed writes the
+// same shape (0.6.0 schema unification) and the knowledge endpoint
+// normalizes legacy v1 rows at the API boundary.
 interface ClaimRec {
   id?: string
-  claim?: string
-  text?: string
   heading?: string
-  ts?: string
+  text?: string
   created_at?: string
-  status?: string
-  source?: string
   source_window?: string
+  status?: string
 }
 interface ConflictRec {
   id?: string
-  claim_id?: string
-  reason?: string
+  heading?: string
   old?: string
   new?: string
-  ts?: string
   created_at?: string
-  status?: string
 }
 interface KnowledgeDoc {
   memory_md?: string
@@ -95,7 +89,6 @@ const claimText = (c: ClaimRec): string => {
   // production `text` duplicates its heading prefix (memory_service writes
   // title + " " + body); trim it so the heading isn't shown twice. A bodyless
   // section trims to '' — fall through instead of rendering an empty row.
-  if (c.claim) return c.claim
   if (c.text) {
     const body = c.heading && c.text.startsWith(c.heading + ' ')
       ? c.text.slice(c.heading.length + 1) : c.text
@@ -104,7 +97,7 @@ const claimText = (c: ClaimRec): string => {
   return c.heading || '(无正文)'
 }
 const claimWhen = (c: ClaimRec): string =>
-  (c.ts || c.created_at || '').slice(0, 19).replace('T', ' ')
+  (c.created_at || '').slice(0, 19).replace('T', ' ')
 
 /** learn gate: the config's gate mode + what it means for this asset */
 const gate = computed(() => {
@@ -240,14 +233,13 @@ watch(() => props.assetId, (v, o) => {
             <div class="tk-conflict-head">
               <span class="tk-tag tk-tag-superseded">已被取代</span>
               <span class="tk-conflict-when mono">
-                {{ (c.ts || c.created_at || '').slice(0, 19).replace('T', ' ') }}</span>
+                {{ (c.created_at || '').slice(0, 19).replace('T', ' ') }}</span>
             </div>
-            <p v-if="c.reason" class="tk-conflict-text">{{ c.reason }}</p>
-            <p v-if="c.old" class="tk-conflict-old">旧: {{ c.old }}</p>
-            <p v-if="c.new" class="tk-conflict-new">新: {{ c.new }}</p>
-            <p v-if="!c.reason && !c.old && !c.new" class="tk-conflict-text">
-              声明 {{ c.claim_id || '—' }} 与当前数据冲突
-            </p>
+            <p v-if="c.new && c.old" class="tk-conflict-text">
+              旧: {{ c.old }} → 新: {{ c.new }}</p>
+            <p v-else-if="c.new" class="tk-conflict-text">{{ c.new }}</p>
+            <p v-else-if="c.old" class="tk-conflict-old">旧: {{ c.old }}</p>
+            <p v-else class="tk-conflict-text">该声明与当前数据冲突</p>
           </div>
         </div>
         <EmptyState v-else label="无冲突记录" hint="学习过程未发现互相矛盾的声明" />
@@ -266,7 +258,7 @@ watch(() => props.assetId, (v, o) => {
                   'tk-tag-superseded': claimStatus(c.status).tone === 'crit',
                 }"
               >{{ claimStatus(c.status).label }}</span>
-              <span v-if="c.source" class="tk-claim-title">{{ c.source === 'feedback' ? '来自反馈' : '来自学习' }}</span>
+              <span v-if="c.source_window" class="tk-claim-title">{{ c.source_window === 'feedback' ? '来自反馈' : '来自学习' }}</span>
               <span v-else-if="c.heading" class="tk-claim-title">{{ c.heading }}</span>
             </div>
             <p class="tk-claim-text">{{ claimText(c) }}</p>
