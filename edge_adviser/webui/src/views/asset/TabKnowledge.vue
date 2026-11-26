@@ -372,6 +372,7 @@ watch(() => props.assetId, (v, o) => {
 .tk-gate-dim { color: var(--tx-dim); }
 .tk-gate-note { margin: 4px 14px 10px; font-size: 10.5px; color: var(--tx-dim); line-height: 1.5; }
 
+/* breakpoint: detail-tab side-rail collapse (1099.98px — asset tabs only) */
 @media (max-width: 1099.98px) {
   .tk { grid-template-columns: 1fr; }
 }

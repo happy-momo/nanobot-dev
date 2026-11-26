@@ -506,6 +506,8 @@ async function submitFeedback(): Promise<void> {
 .ts-btn-primary { color: var(--cyan); }
 .ts-btn-primary:hover:not(:disabled) { color: var(--cyan); }
 
+/* breakpoint: settings-tab form collapse (999.98px — this tab only; kept
+   distinct from the project-wide tablet 899.98px by measured layout need) */
 @media (max-width: 999.98px) {
   .ts { grid-template-columns: 1fr; }
 }

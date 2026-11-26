@@ -9,12 +9,14 @@
 // not a nicety. Both deps bundle locally (offline constraint holds).
 // Carried over verbatim from the old Reports.vue implementation (git 69259d21).
 import { computed } from 'vue'
-import { marked } from 'marked'
+import { Marked } from 'marked'
 import DOMPurify from 'dompurify'
 
 const props = defineProps<{ source: string }>()
 
-marked.setOptions({ gfm: true, breaks: true })
+// instance-level (not the shared `marked` singleton + module setOptions): a
+// second renderer elsewhere could not silently mutate this one's options
+const marked = new Marked({ gfm: true, breaks: true })
 
 const html = computed(() =>
   DOMPurify.sanitize(marked.parse(props.source || '') as string))

@@ -413,6 +413,8 @@ const gapDays = computed<string[]>(() => {
   gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line-2); }
 .au-count { font-size: 10.5px; color: var(--tx-dim); }
 
+/* breakpoint: tablet→stack (project-wide 899.98px; phone grid = 699.98px,
+   detail-tab side rail = 1099.98px; do not invent new widths) */
 @media (max-width: 899.98px) {
   .au-table th, .au-row td { padding: 5px 7px; font-size: 10.5px; }
   .au-reason { max-width: 140px; }

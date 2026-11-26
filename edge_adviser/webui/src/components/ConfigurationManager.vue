@@ -1036,6 +1036,8 @@ onMounted(load)
 .cm-delete > .cm-error { margin: 10px 18px 0; }
 .cm-backup-check { margin: 14px 18px 0; color: var(--tx-hi); font-size: 11px; }
 .cm-delete .cm-dialog-foot { padding: 14px 18px 8px; justify-content: flex-end; }
+/* breakpoint: configuration drawer special case (620px — drawer-only, not
+   part of the project-wide scale) */
 @media (max-width: 620px) {
   .cm-toolbar { align-items: flex-start; flex-direction: column; }
   .cm-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }

@@ -397,6 +397,7 @@ watch(assetId, () => {
 
 .unknown-actions { display: flex; justify-content: center; padding-bottom: 16px; }
 
+/* breakpoint: phone→single-column grid (project-wide 699.98px) */
 @media (max-width: 699.98px) {
   .head-actions { width: 100%; }
   .tab { padding: 8px 10px; }

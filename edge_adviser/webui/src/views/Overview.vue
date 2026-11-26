@@ -439,6 +439,8 @@ onMounted(() => {
   border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 7px;
   background: var(--bg2); }
 
+/* breakpoint: tablet→stack (project-wide 899.98px; phone grid = 699.98px,
+   detail-tab side rail = 1099.98px; do not invent new widths) */
 @media (max-width: 899.98px) {
   .vrow-main { grid-template-columns: auto 1fr; }
   .vrow-spark { grid-column: 1 / -1; }

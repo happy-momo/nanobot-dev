@@ -422,6 +422,8 @@ function closeDialog(): void {
 .al-ack:hover { border-color: var(--cyan-dim); color: var(--tx-hi); }
 .al-acked-done { font-size: 10.5px; color: var(--tx-dim); }
 
+/* breakpoint: tablet→stack (project-wide 899.98px; phone grid = 699.98px,
+   detail-tab side rail = 1099.98px; do not invent new widths) */
 @media (max-width: 899.98px) {
   .al-page { padding: 12px 10px 76px; }
   .al-top { align-items: stretch; }

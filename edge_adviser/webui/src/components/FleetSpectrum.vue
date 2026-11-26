@@ -218,6 +218,8 @@ function onKey(e: KeyboardEvent, id: string) {
 /* dark-bg states (unknown family) can't carry a --bg0 label */
 .seg-dim .seg-label { color: var(--tx-dim); }
 
+/* breakpoint: tablet→stack (project-wide 899.98px; phone grid = 699.98px,
+   detail-tab side rail = 1099.98px; do not invent new widths) */
 @media (max-width: 899.98px) {
   .spec-wrap { height: 44px; }
   .seg { min-width: 0; flex-grow: 1; }

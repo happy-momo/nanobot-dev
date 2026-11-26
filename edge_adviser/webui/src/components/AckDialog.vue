@@ -11,6 +11,7 @@ import { computed, ref, watch } from 'vue'
 import { AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogOverlay, AlertDialogPortal, AlertDialogRoot, AlertDialogTitle } from 'reka-ui'
 import { ackAllAsset, ackAllFleet } from '../api'
+import { fmtTs } from '../utils/fmt'
 import { useRuntime, type AlertRec } from '../stores/runtime'
 import { toast } from '../stores/toast'
 import { stateMeta } from '../theme/meta'
@@ -72,12 +73,7 @@ function levelLabel(a: AlertRec): string {
 function displayHeadline(a: AlertRec): string {
   return localizeConditionText(a.headline || a.reason)
 }
-function fmtTs(ts: number): string {
-  const d = new Date(ts * 1000)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
-    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
+// fmtTs comes from ../utils/fmt (identical epoch formatting)
 
 // ------------------------------------------------------------------- ack --
 async function confirm(): Promise<void> {

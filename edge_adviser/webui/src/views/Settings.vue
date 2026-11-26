@@ -12,6 +12,7 @@
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { fetchConfig, fetchHealth, fetchStats, fetchVersion } from '../api'
 import { useRuntime } from '../stores/runtime'
+import { fmtBytes, fmtS, fmtPct } from '../utils/fmt'
 import ObsPanel from '../components/ObsPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ConfigurationManager from '../components/ConfigurationManager.vue'
@@ -55,24 +56,7 @@ let timer: number | null = null
 onMounted(() => { timer = window.setInterval(load, 60_000) })
 onBeforeUnmount(() => { if (timer !== null) window.clearInterval(timer) })
 
-// ------------------------------------------------------------- formatting --
-function fmtBytes(b: number | null | undefined): string {
-  if (typeof b !== 'number' || !Number.isFinite(b)) return '—'
-  if (b < 1024) return `${b}B`
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)}KB`
-  if (b < 1024 * 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)}MB`
-  return `${(b / 1024 / 1024 / 1024).toFixed(2)}GB`
-}
-function fmtS(v: number | null | undefined): string {
-  if (typeof v !== 'number' || !Number.isFinite(v)) return '—'
-  if (v < 60) return `${Math.round(v)}s`
-  if (v < 3600) return `${Math.round(v / 60)}m`
-  return `${(v / 3600).toFixed(1)}h`
-}
-function fmtPct(v: number | null | undefined): string {
-  if (typeof v !== 'number' || !Number.isFinite(v)) return '—'
-  return `${Math.round(v * 100)}%`
-}
+// formatting helpers (fmtBytes/fmtS/fmtPct) come from ../utils/fmt
 
 const providers = computed(() => stats.value?.providers || null)
 const alertsMeta = computed(() => stats.value?.alerts || null)
@@ -241,6 +225,7 @@ const PARAM_ROWS = computed(() => [
 .st-note { margin: 0; padding: 8px 14px 10px; font-size: 10.5px;
   color: var(--tx-dim); border-top: 1px solid var(--line); line-height: 1.5; }
 
+/* breakpoint: phone→single-column grid (project-wide 699.98px) */
 @media (max-width: 699.98px) {
   .st-cell { border-right: 0; }
 }

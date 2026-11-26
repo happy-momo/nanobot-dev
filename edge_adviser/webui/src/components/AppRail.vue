@@ -160,6 +160,8 @@ function onEntry(name: string, isQa: boolean) {
    on App.vue's .shell (AppRail cannot media-query its own parent), while the
    media query itself must live in the component per the Task 4 brief.
    Touch targets 44px+ (spec §8). */
+/* breakpoint: tablet→stack (project-wide 899.98px; phone grid = 699.98px,
+   detail-tab side rail = 1099.98px; do not invent new widths) */
 @media (max-width: 899.98px) {
   .mode-bottom .rail {
     width: 100%;

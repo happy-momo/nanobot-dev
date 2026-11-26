@@ -449,6 +449,7 @@ watch(() => props.assetId, (v, o) => {
 .al-ack:disabled { opacity: .55; cursor: default; }
 .al-body { margin-top: 5px; font-size: 12px; color: var(--tx); line-height: 1.5; }
 
+/* breakpoint: detail-tab side-rail collapse (1099.98px — asset tabs only) */
 @media (max-width: 1099.98px) {
   .tl { grid-template-columns: 1fr; }
 }

@@ -446,6 +446,7 @@ watch(() => props.assetId, (v, o) => {
 .th-page:disabled { opacity: .45; cursor: default; }
 .th-pageinfo { font-size: 11px; color: var(--tx-dim); }
 
+/* breakpoint: phone→single-column grid (project-wide 699.98px) */
 @media (max-width: 699.98px) {
   .th-table th, .th-row td { padding: 6px 8px; font-size: 11px; }
 }

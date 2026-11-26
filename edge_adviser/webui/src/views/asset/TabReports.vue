@@ -9,7 +9,7 @@
 // The report body is AI content → its frame is violet; the DATA-SCOPE badge
 // and the action row stay cyan (facts + actions). Asset switch mid-flight is
 // guarded by a request sequence so A's slower response never paints B's view.
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { Download, FileText, RefreshCw } from '@lucide/vue'
 import { downloadReport, fetchReport, fetchReports, triggerReport } from '../../api'
 import { toast } from '../../stores/toast'
@@ -324,6 +324,8 @@ watch(() => props.assetId, (v, o) => {
   background-image: linear-gradient(var(--bg3) 12%, transparent 12%);
   background-size: 100% 34px; }
 
+/* breakpoint: tablet→stack (project-wide 899.98px; phone grid = 699.98px,
+   detail-tab side rail = 1099.98px; do not invent new widths) */
 @media (max-width: 899.98px) {
   .tr { grid-template-columns: 1fr; }
   .tr-items { flex-direction: row; overflow-x: auto; max-height: none; }
